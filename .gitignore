@@ -6,7 +6,9 @@
 *.dylib
 bin/
 dist/
-nomad-mcp-server
+# Anchored to the repo root: an unanchored "nomad-mcp-server" would also match
+# the cmd/nomad-mcp-server/ source directory and silently exclude the CLI.
+/nomad-mcp-server
 
 # Test binary, built with `go test -c`
 *.test
