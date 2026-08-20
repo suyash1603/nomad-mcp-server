@@ -288,9 +288,173 @@ in-image.
 
 ---
 
-## What this layer does not do yet
+---
 
-No Nomad client is constructed, no tools are registered, and the HTTP transport
-has no middleware — CORS, rate limiting, request logging and per-session clients
-all arrive with the client layer. `tools/list` currently returns `[]`, which is correct: the
-skeleton is a working MCP server with an empty catalog.
+# The client layer
+
+Everything between a tool handler and the Nomad API: how the client is built,
+who is allowed to call what, and how failures are explained.
+
+## `pkg/client/client.go` — the Provider
+
+`Provider` is what every tool handler will be given. It hands out Nomad API
+clients and carries the config, logger and redactor.
+
+**Building a client.** `buildClient` starts from `api.DefaultConfig()` and then
+overrides. That is deliberate: `api.DefaultConfig()` already understands all ten
+`NOMAD_*` variables, TLS ones included, so starting there means we inherit the
+`nomad` CLI's exact behaviour rather than reimplementing it. Overriding
+afterwards from the resolved `Config` is what keeps a flag beating the
+environment.
+
+One subtlety worth recording, because getting it wrong silently disables TLS
+verification: `api.NewClient` only wires up the CA file, client certificate and
+SNI name **if `HttpClient` is nil** — it calls `api.ConfigureTLS` itself in that
+branch. Supplying our own `HttpClient`, which is what `vault-mcp-server` does for
+Vault, would mean `TLSConfig` is ignored entirely. So we assign `TLSConfig` and
+leave `HttpClient` alone.
+
+**One client per session.** `FromContext` looks up the MCP session and returns
+its client. Each cache entry holds the client *and* a SHA-256 of the token it was
+built with, and both must match to reuse it. A session ID is not a credential; if
+it were treated as one, a leaked or guessed ID would inherit someone else's
+token. When the token changes mid-session the client is rebuilt rather than
+reused, because the cached one still carries the old credential.
+
+Only the hash is stored, never the token, so a heap dump of the cache yields
+nothing usable.
+
+**`ResolveNamespace`** decides which namespace a call targets — tool argument,
+then request header, then server default — and then enforces the allowlist. The
+check happens *here*, before the API call, so a disallowed namespace never
+reaches Nomad and never lands in its audit log.
+
+It also closes a bypass that is easy to miss: Nomad's list endpoints accept `*`
+to mean "every namespace", which would defeat an allowlist entirely. With an
+allowlist configured, `*` is refused.
+
+The refusal message says which knob is responsible:
+
+> namespace "secret-ns" is not permitted by this server's configuration. Allowed
+> namespaces: [prod, staging]. This is enforced by NOMAD_MCP_ALLOWED_NAMESPACES,
+> not by your Nomad token
+
+Without that last clause, a user spends their time re-checking ACL policies for a
+restriction that has nothing to do with Nomad.
+
+## `pkg/client/readonly.go` — the gate
+
+The project's headline safety property, implemented as **one piece of
+middleware** wrapping every tool handler rather than a check at the top of each
+mutating handler. Two reasons: a new write tool cannot forget to include it, and
+the behaviour can be tested once against the gate instead of once per tool.
+
+**Classification is derived, not listed.** `Classify` reads the MCP read-only
+annotation the tool already carries. There is no hand-maintained list of
+mutating tool names to drift out of sync with reality.
+
+It **fails closed**. A tool counts as read-only only if it says so explicitly;
+anything unannotated, and any name the gate has never seen, is treated as
+mutating. So forgetting an annotation makes a read tool stop working — loud and
+immediately obvious — rather than making a write tool quietly callable.
+
+The refusal message is written for a model, and its most important line is the
+instruction *not* to retry:
+
+> This is the default and is not something you can change from here — no other
+> tool will work around it, so do not retry.
+
+Without that, a model reads "refused" as "try harder" and goes hunting for
+another route to the same effect. It then names both ways to lift the
+restriction, and points at the read-only tools that still work.
+
+## `pkg/client/ratelimit.go`
+
+Two limits, doing different jobs. The **global** limit protects the Nomad cluster
+from this server as a whole. The **per-session** limit stops one runaway client —
+usually a model in a retry loop — from consuming the whole global budget and
+starving every other session.
+
+Throttling is returned as a tool *result*, not a Go error, so the model sees the
+explanation and can act on it.
+
+## `pkg/client/middleware.go` — the HTTP stack
+
+Wrapped so that logging sees everything, then headers are lifted into the
+context, then the origin is validated before anything reaches MCP.
+
+**Origin validation is not decoration.** An MCP server on localhost holding a
+Nomad token is reachable by any page the user visits. Without origin checks, a
+malicious site could drive this server from the browser — the DNS-rebinding class
+of attack. Strict mode is the default and rejects every cross-origin request.
+
+A request with **no** `Origin` header is allowed: native MCP clients are not
+browsers and never send one, so rejecting them would break every non-browser
+client while stopping no attack.
+
+`NomadContextMiddleware` reads the token, namespace and region from **headers
+only**, and actively **rejects** requests that put them in the query string:
+
+- A token in a URL leaks into proxy logs, browser history and `Referer` headers.
+- An address in a URL turns this server into an SSRF gadget that will happily
+  send its Nomad token to a host of the caller's choosing.
+
+Both get a 400 rather than being ignored, so a client doing it finds out
+immediately. The rejection never echoes the offending value back.
+
+## `pkg/utils/redact.go`
+
+Two strategies. **Pattern** redaction catches anything *labelled* as a secret,
+which covers values this process has never seen — a token echoed back inside a
+Nomad error body. **Literal** redaction catches the specific secrets this process
+holds, which covers values that appear with no label at all.
+
+Two deliberate exceptions, both of which would make the tool worse if redacted:
+
+- **Bare UUIDs are never redacted.** Nomad allocation, evaluation, deployment and
+  node IDs are all UUIDs. A redactor that scrubbed them would strip exactly the
+  identifiers needed to debug anything. `TestKeepsResourceUUIDs` pins this.
+- **`AccessorID` is kept.** It identifies an ACL token but cannot authenticate as
+  one, and it is often the only clue about which token was used.
+
+The redactor is **idempotent**, which took a bug to get right: redacted text gets
+passed through again routinely — scrubbed once for a log line, again on the way
+to the model — and the first implementation re-matched its own `[REDACTED]`
+marker and appended a bracket each time.
+
+## `pkg/utils/errors.go`
+
+Turns a Nomad error into a sentence a model can act on. The design is driven by
+one observed fact:
+
+> **Nomad's 403 body is only ever the string `Permission denied`.**
+
+Verified against Nomad 2.0.5 OSS with ACLs enabled. Nomad never names the missing
+capability, so the "your NOMAD_TOKEN lacks capability X in namespace Y" message is
+impossible to produce from the error alone. `ErrorContext` is how the tool
+supplies what the error cannot: the capability its endpoint documents, the
+namespace, the resource kind and name, and the tool to run next.
+
+Other mappings, all from observed behaviour:
+
+| Seen | Becomes |
+|---|---|
+| 404 `job not found` | `No job named "web" in namespace "prod". Try list_jobs …` |
+| 501 `Nomad Enterprise only endpoint` | "this requires Nomad Enterprise, and the cluster … is Community Edition" |
+| `connection refused` | "Is the Nomad agent running, and is NOMAD_ADDR correct?" |
+| 500 | points at `get_cluster_status`, since no-leader is the usual cause |
+
+`StatusCode` prefers the typed `api.UnexpectedResponseError` but falls back to
+parsing `"Unexpected response code: 404 (job not found)"` out of the message,
+because some Nomad client paths format the status into a plain error string.
+
+The tests build these errors by driving the **real** Nomad API client against an
+`httptest` server, rather than hand-constructing error values whose fields are
+unexported — so they exercise the same values the tools will actually see.
+
+## What the client layer does not do
+
+No tools are registered, so `tools/list` still returns `[]` and
+`gate.MutatingTools()` is empty. The gate, limiter, provider and error mapping
+are all wired into `NewServer` and waiting for the tool layer to give them something to
+guard.

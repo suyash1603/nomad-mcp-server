@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/suyash1603/nomad-mcp-server/pkg/client"
 	"github.com/suyash1603/nomad-mcp-server/pkg/config"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools"
 	"github.com/suyash1603/nomad-mcp-server/pkg/utils"
@@ -131,18 +132,43 @@ func runDefaultCommand(_ *cobra.Command, _ []string) error {
 
 // NewServer builds the MCP server itself: capabilities, middleware and session
 // hooks. Both transports share it.
-func NewServer(cfg *config.Config, logger *log.Logger, opts ...server.ServerOption) *server.MCPServer {
+//
+// Middleware order matters. Rate limiting runs first so that a client hammering
+// a blocked tool is throttled rather than generating unbounded refusals, and the
+// read-only gate runs before any handler so a refused call never reaches Nomad.
+func NewServer(cfg *config.Config, logger *log.Logger, opts ...server.ServerOption) (*server.MCPServer, error) {
+	provider, err := client.New(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	gate := client.NewGate(cfg.ReadOnly, logger)
+	limiter := client.NewRateLimiter(client.ParseRateLimits(cfg, logger), logger)
+
+	hooks := &server.Hooks{}
+	provider.RegisterHooks(hooks)
+	limiter.RegisterHooks(hooks)
+
 	defaultOpts := []server.ServerOption{
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),
 		server.WithRecovery(),
+		server.WithHooks(hooks),
+		server.WithToolHandlerMiddleware(limiter.Middleware()),
+		server.WithToolHandlerMiddleware(gate.Middleware()),
 	}
 	opts = append(defaultOpts, opts...)
 
 	s := server.NewMCPServer("nomad-mcp-server", version.Version, opts...)
-	tools.InitTools(s, cfg, logger)
-	return s
+	tools.InitTools(s, provider, gate)
+
+	if cfg.ReadOnly {
+		logger.WithField("mutating_tools", len(gate.MutatingTools())).
+			Info("read-only mode: mutating tools will be refused")
+	}
+
+	return s, nil
 }
 
 func runStdioServer(cfg *config.Config, logger *log.Logger) error {
@@ -151,7 +177,10 @@ func runStdioServer(cfg *config.Config, logger *log.Logger) error {
 
 	logStartup(cfg, logger)
 
-	mcpServer := NewServer(cfg, logger)
+	mcpServer, err := NewServer(cfg, logger)
+	if err != nil {
+		return err
+	}
 	stdioServer := server.NewStdioServer(mcpServer)
 	stdioServer.SetErrorLogger(stdlog.New(logger.Writer(), "stdioserver ", 0))
 
@@ -183,16 +212,29 @@ func runHTTPServer(cfg *config.Config, logger *log.Logger) error {
 	logStartup(cfg, logger)
 
 	endpointPath := path.Join("/", cfg.MCPEndpoint)
-	mcpServer := NewServer(cfg, logger)
+	mcpServer, err := NewServer(cfg, logger)
+	if err != nil {
+		return err
+	}
 
 	streamable := server.NewStreamableHTTPServer(mcpServer,
 		server.WithEndpointPath(endpointPath),
 		server.WithStreamableHTTPLogger(utils.SlogFromLogrus(logger)),
 	)
 
+	// Wrapped outermost-last: logging sees every request, then per-request
+	// Nomad settings are lifted out of headers, then the origin is validated
+	// before anything reaches the MCP handler.
+	cors := client.LoadCORSConfig(cfg)
+	logCORS(cors, logger)
+
+	var handler http.Handler = client.NewSecurityHandler(streamable, cors, logger)
+	handler = client.NomadContextMiddleware(logger)(handler)
+	handler = client.LoggingMiddleware(logger)(handler)
+
 	mux := http.NewServeMux()
-	mux.Handle(endpointPath, streamable)
-	mux.Handle(endpointPath+"/", streamable)
+	mux.Handle(endpointPath, handler)
+	mux.Handle(endpointPath+"/", handler)
 	mux.HandleFunc("/health", healthHandler(cfg, endpointPath, logger))
 
 	addr := fmt.Sprintf("%s:%s", cfg.TransportHost, cfg.TransportPort)
@@ -257,6 +299,23 @@ func healthHandler(cfg *config.Config, endpointPath string, logger *log.Logger) 
 		if _, err := w.Write([]byte(body)); err != nil {
 			logger.WithError(err).Error("failed to write health check response")
 		}
+	}
+}
+
+// logCORS makes the effective origin policy visible at startup, since a
+// misconfigured one shows up later as an opaque 403 in a browser client.
+func logCORS(cors client.CORSConfig, logger *log.Logger) {
+	logger.WithField("cors_mode", cors.Mode).Info("CORS policy loaded")
+
+	switch {
+	case len(cors.AllowedOrigins) > 0:
+		logger.Infof("allowed origins: %s", strings.Join(cors.AllowedOrigins, ", "))
+	case cors.Mode == "strict":
+		logger.Warn("no allowed origins configured in strict mode: all cross-origin requests will be rejected")
+	case cors.Mode == "development":
+		logger.Info("development mode: localhost origins are allowed automatically")
+	case cors.Mode == "disabled":
+		logger.Warn("CORS validation is disabled; not recommended outside local development")
 	}
 }
 
