@@ -1,0 +1,73 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+nomad-mcp-server
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.*
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# IDE files
+.idea/
+.vscode/*
+!.vscode/mcp.json
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment files — never commit these
+.env
+.env.*
+!.env.example
+
+# Credentials and keys — never commit these
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.token
+secrets/
+
+# Local Nomad agent state (`nomad agent -dev` writes here)
+nomad-data/
+data/
+/tmp/nomad*
+*.hclic
+
+# Terraform, if any ever lands here
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Agent tooling
+/.claude
+/.opencode
