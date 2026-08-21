@@ -4,9 +4,8 @@
 // Package tools registers every MCP tool on the server.
 //
 // Each domain lives in its own subpackage (system, jobs, allocs, ...) with one
-// file per tool, and each tool file exports a constructor returning a
-// server.ServerTool. InitTools is the single place that decides what the server
-// exposes.
+// file per tool group, and each tool constructor returns a server.ServerTool.
+// Catalog is the single place that decides what the server exposes.
 package tools
 
 import (
@@ -22,15 +21,15 @@ import (
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/variables"
 )
 
-// InitTools registers the tool catalog on the MCP server.
+// Catalog returns every tool the server exposes.
 //
-// Mutating tools are registered even when the server is read-only. They are
-// refused at call time by the gate instead, so that tools/list describes the
-// server honestly and a blocked call returns an explanation rather than an
-// "unknown tool" error that looks like a bug.
-func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
-	register(s, gate,
-		// System and cluster.
+// It is exported and separate from InitTools so that tests can inspect the
+// catalog directly — checking that each tool is annotated, that every mutating
+// tool is refused in read-only mode, and that descriptions exist — without
+// standing up an MCP server and driving it over a transport.
+func Catalog(p *client.Provider) []server.ServerTool {
+	return []server.ServerTool{
+		// System and cluster (read).
 		system.GetClusterStatus(p),
 		system.ListRegions(p),
 		system.ListNodePools(p),
@@ -50,6 +49,14 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
 		jobs.ValidateJob(p),
 		jobs.PlanJob(p),
 
+		// Jobs (write).
+		jobs.RunJob(p),
+		jobs.StopJob(p),
+		jobs.ScaleTaskGroup(p),
+		jobs.RevertJobVersion(p),
+		jobs.DispatchParameterizedJob(p),
+		jobs.ForcePeriodicJob(p),
+
 		// Allocations (read).
 		allocs.ListAllocations(p),
 		allocs.ReadAllocation(p),
@@ -58,16 +65,29 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
 		allocs.ReadAllocationFile(p),
 		allocs.GetAllocationStats(p),
 
+		// Allocations (write).
+		allocs.RestartAllocation(p),
+		allocs.StopAllocation(p),
+		allocs.SignalAllocation(p),
+
 		// Nodes (read).
 		nodes.ListNodes(p),
 		nodes.ReadNode(p),
 		nodes.ListNodeAllocations(p),
+
+		// Nodes (write).
+		nodes.DrainNode(p),
+		nodes.SetNodeEligibility(p),
 
 		// Deployments and evaluations (read).
 		scheduler.ListDeployments(p),
 		scheduler.ReadDeployment(p),
 		scheduler.ListEvaluations(p),
 		scheduler.ReadEvaluation(p),
+
+		// Deployments (write).
+		scheduler.PromoteDeployment(p),
+		scheduler.FailDeployment(p),
 
 		// Namespaces, services and volumes (read).
 		catalog.ListNamespaces(p),
@@ -77,24 +97,40 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
 		catalog.ListVolumes(p),
 		catalog.ReadVolume(p),
 
+		// Namespaces (write).
+		catalog.CreateNamespace(p),
+		catalog.DeleteNamespace(p),
+
 		// Variables (read).
 		variables.ListVariables(p),
 		variables.ReadVariable(p),
-	)
 
-	p.Logger().WithField("mutating", len(gate.MutatingTools())).Debug("registered tools")
+		// Variables (write).
+		variables.WriteVariable(p),
+		variables.DeleteVariable(p),
+	}
 }
 
-// register adds tools to the server and classifies each one for the read-only
-// gate in the same step.
+// InitTools registers the tool catalog on the MCP server.
 //
-// Classification is derived from the tool's own MCP read-only annotation rather
-// than from a separate list, so the two cannot drift apart. A tool that omits
-// the annotation is treated as mutating and blocked in read-only mode, which
-// makes forgetting it a visible failure rather than a silent hole.
-func register(s *server.MCPServer, gate *client.Gate, tools ...server.ServerTool) {
+// Mutating tools are registered even when the server is read-only. They are
+// refused at call time by the gate instead, so that tools/list describes the
+// server honestly and a blocked call returns an explanation rather than an
+// "unknown tool" error that looks like a bug.
+func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
+	tools := Catalog(p)
+
 	for _, t := range tools {
+		// Classification is derived from the tool's own MCP read-only
+		// annotation rather than from a separate list, so the two cannot drift
+		// apart. A tool that omits the annotation is treated as mutating and
+		// blocked in read-only mode, which makes forgetting it a visible
+		// failure rather than a silent hole.
 		gate.Classify(t.Tool)
 		s.AddTool(t.Tool, t.Handler)
 	}
+
+	p.Logger().WithField("tools", len(tools)).
+		WithField("mutating", len(gate.MutatingTools())).
+		Debug("registered tools")
 }
