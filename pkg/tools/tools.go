@@ -13,8 +13,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/allocs"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/catalog"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/jobs"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/nodes"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/scheduler"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/system"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/variables"
 )
 
 // InitTools registers the tool catalog on the MCP server.
@@ -44,6 +49,37 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
 		jobs.ParseJobHCL(p),
 		jobs.ValidateJob(p),
 		jobs.PlanJob(p),
+
+		// Allocations (read).
+		allocs.ListAllocations(p),
+		allocs.ReadAllocation(p),
+		allocs.ReadAllocationLogs(p),
+		allocs.ListAllocationFiles(p),
+		allocs.ReadAllocationFile(p),
+		allocs.GetAllocationStats(p),
+
+		// Nodes (read).
+		nodes.ListNodes(p),
+		nodes.ReadNode(p),
+		nodes.ListNodeAllocations(p),
+
+		// Deployments and evaluations (read).
+		scheduler.ListDeployments(p),
+		scheduler.ReadDeployment(p),
+		scheduler.ListEvaluations(p),
+		scheduler.ReadEvaluation(p),
+
+		// Namespaces, services and volumes (read).
+		catalog.ListNamespaces(p),
+		catalog.ReadNamespace(p),
+		catalog.ListServices(p),
+		catalog.ReadService(p),
+		catalog.ListVolumes(p),
+		catalog.ReadVolume(p),
+
+		// Variables (read).
+		variables.ListVariables(p),
+		variables.ReadVariable(p),
 	)
 
 	p.Logger().WithField("mutating", len(gate.MutatingTools())).Debug("registered tools")
