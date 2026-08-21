@@ -99,14 +99,6 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    # Advisory, not a gate. This module targets Go 1.26, and golangci-lint
-    # releases lag new Go versions by weeks — it refuses to start with "the Go
-    # language version used to build golangci-lint is lower than the targeted
-    # Go version", which is a toolchain mismatch rather than anything wrong
-    # with this code. The actual gates are gofmt, go vet and the test suite in
-    # the build job, all of which block. Once golangci-lint supports the Go
-    # version in go.mod, drop continue-on-error and pin the version.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -115,10 +107,41 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --timeout=5m
+      # golangci-lint is invoked directly rather than through its action so that
+      # a toolchain mismatch can be told apart from a real finding.
+      #
+      # golangci-lint releases lag new Go versions by weeks. Until one is built
+      # with a Go at least as new as this module's `go` directive, it refuses to
+      # start at all: "the Go language version (go1.24) used to build
+      # golangci-lint is lower than the targeted Go version (1.26.5)". That is a
+      # fact about the linter's build, not about this code, and it must not be
+      # reported as a lint failure — nor silently swallowed, or nobody would
+      # notice when it starts working.
+      #
+      # Real findings still fail the job. gofmt, go vet and the test suite are
+      # separate gates in the build job.
+      - name: Run golangci-lint
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" latest
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          golangci-lint --version
+
+          set +e
+          output=$(golangci-lint run --timeout=5m ./... 2>&1)
+          code=$?
+          set -e
+
+          echo "$output"
+
+          if [ $code -ne 0 ] && \
+             echo "$output" | grep -q 'used to build golangci-lint is lower than the targeted Go version'; then
+            echo "::notice::golangci-lint cannot yet parse this module's Go version. \
+          Skipping. Remove this branch once a release built with Go $(go env GOVERSION) exists."
+            exit 0
+          fi
+
+          exit $code
 
   secrets:
     name: No secrets in the tree
@@ -126,19 +149,51 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # This repository is intended to be publishable. The scan is deliberately
-      # narrow — a Nomad token assigned to a recognisable variable — because a
-      # broad one would fire on every UUID in the test fixtures and be ignored
-      # within a week.
+      # This repository is intended to be publishable, so nothing token-shaped
+      # should be assigned to a credential variable anywhere in it.
+      #
+      # Test files are excluded from the token pattern, and that exclusion is
+      # deliberate rather than a concession: the HTTP leak tests must contain
+      # token-shaped strings, because their whole purpose is to assert that such
+      # a value in a query string is rejected with a 400. On its first run this
+      # check failed on its own fixture. A scan that fires on the tests proving
+      # the guard works is a scan people learn to ignore.
+      #
+      # The other three checks apply everywhere, tests included.
       - name: Scan for assigned tokens
         run: |
+          fail=0
+
+          echo "--- tokens assigned to a credential variable (non-test files) ---"
           if grep -rniE \
-            'NOMAD_TOKEN[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_-]{20,}' \
-            --exclude-dir=.git --exclude-dir=.github . ; then
-            echo "::error::a token-shaped value is assigned to NOMAD_TOKEN in the tree"
-            exit 1
+            '(NOMAD_TOKEN|SECRET_ID|ACL_TOKEN)[[:space:]]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_-]{20,}' \
+            --include='*.go' --include='*.md' --include='*.yml' --include='*.yaml' \
+            --include='*.json' --include='*.hcl' --include='*.sh' --include='Dockerfile' \
+            --exclude='*_test.go' --exclude-dir=.git . ; then
+            echo "::error::a token-shaped value is assigned to a credential variable"
+            fail=1
           fi
-          echo "clean"
+
+          echo "--- committed private keys ---"
+          if git ls-files | grep -iE '\.(pem|key|p12|pfx)$' ; then
+            echo "::error::a key file is tracked"
+            fail=1
+          fi
+
+          echo "--- committed environment files ---"
+          if git ls-files | grep -E '(^|/)\.env($|\.)' ; then
+            echo "::error::a .env file is tracked"
+            fail=1
+          fi
+
+          echo "--- PEM blocks anywhere in the tree ---"
+          if grep -rlE --exclude-dir=.git -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' . ; then
+            echo "::error::a private key block is present"
+            fail=1
+          fi
+
+          [ $fail -eq 0 ] && echo "clean"
+          exit $fail
 
   docker:
     name: Docker image
