@@ -61,13 +61,15 @@ fmt:
 vet:
 	$(GO) vet ./...
 
-## lint: run golangci-lint if it is installed
+## lint: run golangci-lint, installing it if needed
+#
+# Installed with `go install` rather than a prebuilt binary so it is built with
+# the same toolchain as this module. A prebuilt golangci-lint older than the
+# `go` directive refuses to start at all.
 lint:
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
-	else \
-		echo "golangci-lint not installed; skipping. Install: https://golangci-lint.run/welcome/install/"; \
-	fi
+	@command -v golangci-lint >/dev/null 2>&1 || \
+		$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+	@PATH="$$($(GO) env GOPATH)/bin:$$PATH" golangci-lint run --timeout=5m ./...
 
 ## test: run unit tests (Nomad is faked with httptest; no cluster needed)
 test:
@@ -100,8 +102,8 @@ test-http:
 ## test-all: unit, race and end-to-end
 test-all: test-race test-e2e
 
-## check: everything CI runs
-check: fmt vet test
+## check: everything CI gates on
+check: fmt vet lint test
 
 ## run-stdio: run the server on stdio against a local dev agent
 run-stdio: build

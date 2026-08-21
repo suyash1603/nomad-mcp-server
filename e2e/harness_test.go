@@ -430,32 +430,6 @@ func (c *mcpClient) request(method string, params any) json.RawMessage {
 	return resp.Result
 }
 
-// requestErr is request for the cases where a JSON-RPC error is the point.
-func (c *mcpClient) requestErr(method string, params any) string {
-	c.t.Helper()
-
-	c.mu.Lock()
-	c.id++
-	id := c.id
-	c.mu.Unlock()
-
-	c.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
-
-	line, err := c.out.ReadBytes('\n')
-	if err != nil {
-		c.t.Fatalf("reading the response to %s: %v", method, err)
-	}
-
-	var resp rpcResponse
-	if err := json.Unmarshal(line, &resp); err != nil {
-		c.t.Fatalf("not JSON-RPC: %s", line)
-	}
-	if resp.Error == nil {
-		c.t.Fatalf("%s unexpectedly succeeded", method)
-	}
-	return resp.Error.Message
-}
-
 type toolResult struct {
 	Content []struct {
 		Type string `json:"type"`

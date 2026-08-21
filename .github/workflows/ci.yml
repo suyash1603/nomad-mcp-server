@@ -107,41 +107,28 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # golangci-lint is invoked directly rather than through its action so that
-      # a toolchain mismatch can be told apart from a real finding.
+      # golangci-lint is installed with `go install` rather than through its
+      # action or its install script, for two reasons found the hard way:
       #
-      # golangci-lint releases lag new Go versions by weeks. Until one is built
-      # with a Go at least as new as this module's `go` directive, it refuses to
-      # start at all: "the Go language version (go1.24) used to build
-      # golangci-lint is lower than the targeted Go version (1.26.5)". That is a
-      # fact about the linter's build, not about this code, and it must not be
-      # reported as a lint failure — nor silently swallowed, or nobody would
-      # notice when it starts working.
+      #   - The install script verifies a checksum that did not match the
+      #     release tarball, failing the job with what looks like a supply-chain
+      #     alarm. Going through the module proxy uses Go's own checksum
+      #     database instead.
+      #   - Building it with this module's toolchain means it is always at least
+      #     as new as the `go` directive. The action's prebuilt binary lagged and
+      #     refused to start: "the Go language version (go1.24) used to build
+      #     golangci-lint is lower than the targeted Go version (1.26.5)".
       #
-      # Real findings still fail the job. gofmt, go vet and the test suite are
-      # separate gates in the build job.
-      - name: Run golangci-lint
+      # This is slower than a prebuilt binary — a couple of minutes — but it
+      # cannot drift out of step with the Go version this project targets.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+      - name: Lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" latest
           export PATH="$(go env GOPATH)/bin:$PATH"
           golangci-lint --version
-
-          set +e
-          output=$(golangci-lint run --timeout=5m ./... 2>&1)
-          code=$?
-          set -e
-
-          echo "$output"
-
-          if [ $code -ne 0 ] && \
-             echo "$output" | grep -q 'used to build golangci-lint is lower than the targeted Go version'; then
-            echo "::notice::golangci-lint cannot yet parse this module's Go version. \
-          Skipping. Remove this branch once a release built with Go $(go env GOVERSION) exists."
-            exit 0
-          fi
-
-          exit $code
+          golangci-lint run --timeout=5m ./...
 
   secrets:
     name: No secrets in the tree

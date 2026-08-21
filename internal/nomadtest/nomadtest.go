@@ -84,7 +84,7 @@ func New(t *testing.T) *Server {
 
 	s := &Server{t: t, routes: map[string]http.HandlerFunc{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
-	t.Cleanup(s.Server.Close)
+	t.Cleanup(s.Close)
 
 	s.loadDefaults()
 	return s

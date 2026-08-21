@@ -252,7 +252,7 @@ func runHTTPServer(cfg *config.Config, logger *log.Logger) error {
 	cors := client.LoadCORSConfig(cfg)
 	logCORS(cors, logger)
 
-	var handler http.Handler = client.NewSecurityHandler(streamable, cors, logger)
+	handler := client.NewSecurityHandler(streamable, cors, logger)
 	handler = client.NomadContextMiddleware(logger)(handler)
 	handler = client.LoggingMiddleware(logger)(handler)
 
