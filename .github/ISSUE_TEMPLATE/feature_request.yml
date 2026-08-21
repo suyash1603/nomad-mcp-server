@@ -1,0 +1,42 @@
+name: Feature request
+description: A tool, a resource, a prompt, or a setting that should exist
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: there are deliberately **no ACL tools** — nothing that
+        creates, reads or writes ACL tokens or policies. That is a permanent
+        decision, explained in
+        [docs/SECURITY.md](https://github.com/suyash1603/nomad-mcp-server/blob/main/docs/SECURITY.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to find out or do, and what happens when you try it
+        today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would add
+      description: >
+        If it is a tool, which Nomad endpoint backs it, and would it read or
+        write?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mutating
+    attributes:
+      label: Does it change the cluster?
+      options:
+        - "No — read only"
+        - "Yes — it would be gated behind NOMAD_MCP_READ_ONLY"
+        - "Not sure"
+    validations:
+      required: true

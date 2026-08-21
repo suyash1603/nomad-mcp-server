@@ -1,0 +1,93 @@
+# Copyright (c) 2026 suyash1603
+# SPDX-License-Identifier: MPL-2.0
+
+version: 2
+
+project_name: nomad-mcp-server
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: nomad-mcp-server
+    main: ./cmd/nomad-mcp-server
+    binary: nomad-mcp-server
+    # Static binaries, so the same artifact runs in a scratch container and on
+    # a host with no libc worth speaking of.
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X github.com/suyash1603/nomad-mcp-server/version.Version={{ .Version }}
+      - -X github.com/suyash1603/nomad-mcp-server/version.GitCommit={{ .FullCommit }}
+      - -X github.com/suyash1603/nomad-mcp-server/version.BuildDate={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - docs/*
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  # CHANGELOG.md is written by hand and says why things changed. The generated
+  # list here is just the commits since the last tag, for people who want it.
+  use: github
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Documentation
+      regexp: '^docs'
+      order: 2
+    - title: Tests
+      regexp: '^test'
+      order: 3
+  filters:
+    exclude:
+      - '^chore'
+      - '^Merge'
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```bash
+    # Docker
+    docker run -i --rm -e NOMAD_ADDR -e NOMAD_TOKEN \
+      ghcr.io/suyash1603/nomad-mcp-server:{{ .Tag }} stdio
+
+    # Go
+    go install github.com/suyash1603/nomad-mcp-server/cmd/nomad-mcp-server@{{ .Tag }}
+    ```
+
+    See [docs/TEAM-TESTING.md](https://github.com/suyash1603/nomad-mcp-server/blob/main/docs/TEAM-TESTING.md)
+    to try it in ten minutes.
+
+    **Beta.** Tool names, output shapes and defaults may change before 1.0.

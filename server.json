@@ -1,0 +1,94 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.suyash1603/nomad-mcp-server",
+  "description": "Safe, structured access to a HashiCorp Nomad cluster: jobs, allocations, task logs, nodes, deployments and scheduler evaluations. Read-only by default.",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/suyash1603/nomad-mcp-server",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "registryBaseUrl": "https://ghcr.io",
+      "identifier": "suyash1603/nomad-mcp-server",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "stdio",
+          "isRequired": true,
+          "description": "Run the stdio transport"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "NOMAD_ADDR",
+          "description": "Address of the Nomad HTTP API, e.g. http://127.0.0.1:4646",
+          "isRequired": true,
+          "default": "http://127.0.0.1:4646"
+        },
+        {
+          "name": "NOMAD_TOKEN",
+          "description": "Nomad ACL token. Use a read-only policy scoped to the namespaces you want visible, not a management token.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "NOMAD_NAMESPACE",
+          "description": "Default Nomad namespace for namespaced tools",
+          "isRequired": false,
+          "default": "default"
+        },
+        {
+          "name": "NOMAD_MCP_READ_ONLY",
+          "description": "Refuse every tool that would change the cluster. Leave this true unless you specifically want the assistant to be able to stop jobs and drain nodes.",
+          "isRequired": false,
+          "default": "true"
+        },
+        {
+          "name": "NOMAD_MCP_ALLOWED_NAMESPACES",
+          "description": "Comma-separated allowlist of namespaces the server may touch. Unset means all of them.",
+          "isRequired": false
+        },
+        {
+          "name": "NOMAD_MCP_ALLOW_VARIABLE_READS",
+          "description": "Allow read_variable to return Nomad Variable values. Variables are the cluster's secret store; this is separate from read-only mode.",
+          "isRequired": false,
+          "default": "false"
+        }
+      ]
+    },
+    {
+      "registryType": "mcpb",
+      "registryBaseUrl": "https://github.com",
+      "identifier": "https://github.com/suyash1603/nomad-mcp-server/releases/download/v0.1.0/nomad-mcp-server_0.1.0_darwin_arm64.tar.gz",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" },
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "stdio",
+          "isRequired": true,
+          "description": "Run the stdio transport"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "NOMAD_ADDR",
+          "description": "Address of the Nomad HTTP API",
+          "isRequired": true,
+          "default": "http://127.0.0.1:4646"
+        },
+        {
+          "name": "NOMAD_TOKEN",
+          "description": "Nomad ACL token. Prefer a read-only policy.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

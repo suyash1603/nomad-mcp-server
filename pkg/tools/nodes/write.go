@@ -29,7 +29,12 @@ func DrainNode(p *client.Provider) server.ServerTool {
 					"Always confirm with the user first. This is the sort of operation that empties "+
 					"a production node.\n\n"+
 					"Set enable=false to cancel a drain and make the node eligible again."),
-			utils.MutatingTool(true, true),
+			// Not idempotent: `deadline` is relative to when the drain is
+			// issued, so re-draining an already-draining node pushes its forced
+			// eviction out by another full deadline. A client that skips
+			// re-confirmation on an "idempotent" retry would be moving a
+			// production node's eviction clock without asking.
+			utils.MutatingTool(true, false),
 			NodeIDParam(),
 			mcp.WithBoolean("enable",
 				mcp.DefaultBool(true),

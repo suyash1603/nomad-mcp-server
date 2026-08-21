@@ -1,0 +1,39 @@
+# Copyright (c) 2026 suyash1603
+# SPDX-License-Identifier: MPL-2.0
+
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - e2e
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - misspell
+    - revive
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+
+  exclusions:
+    rules:
+      # Test files close over *testing.T and fail loudly; an unchecked Close or
+      # Write there is noise, not a defect.
+      - path: '_test\.go'
+        linters:
+          - errcheck
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt

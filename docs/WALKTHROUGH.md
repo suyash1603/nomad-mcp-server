@@ -653,11 +653,12 @@ rather than set to a blanket value:
 
 | Tool | destructive | idempotent | Why |
 |---|---|---|---|
-| `run_job` | false | false | Creates or updates; a second identical submit is a new version |
-| `stop_job` | true | true | Interrupts running work; stopping twice is the same |
+| `run_job` | true | false | An update rolls the running allocations; each submit is a new version |
+| `stop_job` | true | false | Interrupts running work, and each call yields a new evaluation |
+| `scale_task_group` | true | true | Can remove allocations, but the same target count is the same end state |
 | `set_node_eligibility` | false | true | Pure state flag |
-| `drain_node` | true | false | Moves running allocations; the deadline restarts |
-| `delete_variable` | true | true | Discards a secret |
+| `drain_node` | true | false | Moves running allocations, and re-issuing restarts the deadline |
+| `delete_variable` | true | true | Discards a secret; the second delete leaves the same absence |
 
 A separate test asserts that every tool marked destructive says so in its own
 description as well. Four of them did not, when the test was first written —

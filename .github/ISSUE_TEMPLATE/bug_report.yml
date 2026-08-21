@@ -1,0 +1,75 @@
+name: Bug report
+description: Something behaves differently from how it is documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please do not paste real tokens, cluster addresses or job
+        specifications.** Redact them, or reproduce against `nomad agent -dev`.
+
+        For anything security-relevant, open a
+        [private advisory](https://github.com/suyash1603/nomad-mcp-server/security/advisories/new)
+        instead of an issue.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: >
+        The exact tool call or the question you asked your assistant. If it was
+        a natural-language question, the wording matters — it is what the model
+        routed on.
+      placeholder: |
+        1. Started the server with NOMAD_ADDR=... NOMAD_MCP_READ_ONLY=true
+        2. Asked: "why is the payments job not placing?"
+        3. It called read_allocation_logs instead of list_job_evaluations
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: The output of `nomad-mcp-server --version`
+    validations:
+      required: true
+
+  - type: input
+    id: nomad
+    attributes:
+      label: Nomad version
+      description: The output of `nomad version`. Please say if it is an Enterprise build.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Transport
+      options: [stdio, streamable-http]
+    validations:
+      required: true
+
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Code 2.x, Claude Desktop, Cursor, MCP Inspector, curl…
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs
+      description: >
+        From stderr, ideally with `NOMAD_MCP_LOG_LEVEL=debug`. Tokens are
+        redacted automatically, but please check before pasting.
+      render: shell

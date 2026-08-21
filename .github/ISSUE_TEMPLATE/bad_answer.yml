@@ -1,0 +1,45 @@
+name: The assistant answered badly
+description: It picked the wrong tool, or got the wrong conclusion from the right one
+labels: ["tool-description"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful kind of report this project gets.
+
+        Tool descriptions are written for a model to act on. If the model picks
+        the wrong tool, or reads the output wrongly, the description is wrong —
+        that is a bug here, not a limitation of the model.
+
+        **Please redact anything real.**
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What you asked
+      description: Word for word. The phrasing is what the model routed on.
+    validations:
+      required: true
+
+  - type: textarea
+    id: did
+    attributes:
+      label: What it did
+      description: Which tools it called, in what order, and what it concluded.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What it should have done
+      description: >
+        Which tool would have answered the question, and how you know.
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model and client
+      placeholder: Claude Opus 4.5 in Claude Code

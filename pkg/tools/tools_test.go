@@ -106,6 +106,71 @@ var expectedMutatingTools = []string{
 	"write_variable",
 }
 
+// expectedHints pins the destructive and idempotent annotation of every
+// mutating tool.
+//
+// These are not decoration: MCP clients use them to decide whether to ask the
+// user before proceeding, and whether a retry needs re-confirming. A wrong
+// value is a silently missing confirmation prompt.
+//
+// It is a literal table for the same reason as expectedMutatingTools — deriving
+// it from the catalog would make the test agree with whatever the code happens
+// to say. It caught drain_node claiming to be idempotent when its deadline is
+// relative to the moment it is issued, so re-draining a node moves its forced
+// eviction out by another full deadline.
+var expectedHints = []struct {
+	name        string
+	destructive bool
+	idempotent  bool
+}{
+	{"create_namespace", false, true},
+	{"delete_namespace", true, true},
+	{"delete_variable", true, true},
+	{"dispatch_parameterized_job", false, false},
+	{"drain_node", true, false},
+	{"fail_deployment", true, true},
+	{"force_periodic_job", false, false},
+	{"promote_deployment", true, true},
+	{"restart_allocation", true, true},
+	{"revert_job_version", true, false},
+	{"run_job", true, false},
+	{"scale_task_group", true, true},
+	{"set_node_eligibility", false, true},
+	{"signal_allocation", true, false},
+	{"stop_allocation", true, false},
+	{"stop_job", true, false},
+	{"write_variable", true, true},
+}
+
+func TestMutatingToolHintsAreWhatWeIntend(t *testing.T) {
+	p := testProvider(t, false)
+
+	byName := map[string]mcp.Tool{}
+	for _, tool := range Catalog(p) {
+		byName[tool.Tool.Name] = tool.Tool
+	}
+
+	require.Len(t, expectedHints, len(expectedMutatingTools),
+		"every mutating tool needs its hints pinned")
+
+	for _, want := range expectedHints {
+		t.Run(want.name, func(t *testing.T) {
+			tool, ok := byName[want.name]
+			require.True(t, ok, "no such tool")
+
+			require.NotNil(t, tool.Annotations.DestructiveHint,
+				"a mutating tool must declare whether it is destructive")
+			require.NotNil(t, tool.Annotations.IdempotentHint,
+				"a mutating tool must declare whether it is idempotent")
+
+			require.Equal(t, want.destructive, *tool.Annotations.DestructiveHint,
+				"destructiveHint drives whether a client asks before proceeding")
+			require.Equal(t, want.idempotent, *tool.Annotations.IdempotentHint,
+				"idempotentHint drives whether a client re-confirms on retry")
+		})
+	}
+}
+
 // TestEveryMutatingToolIsRefusedInReadOnlyMode is the guarantee the whole
 // project rests on: with NOMAD_MCP_READ_ONLY=true, no write tool runs.
 func TestEveryMutatingToolIsRefusedInReadOnlyMode(t *testing.T) {
