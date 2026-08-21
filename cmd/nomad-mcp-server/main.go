@@ -138,6 +138,15 @@ func runDefaultCommand(_ *cobra.Command, _ []string) error {
 // Middleware order matters. Rate limiting runs first so that a client hammering
 // a blocked tool is throttled rather than generating unbounded refusals, and the
 // read-only gate runs before any handler so a refused call never reaches Nomad.
+//
+// Rate limiting applies to the HTTP transport only. On stdio there is exactly
+// one client, it is local, and the user started it themselves — the limiter's
+// stated job of stopping one session from starving the others has no meaning
+// there. It was also unconfigurable in that mode: MCP_RATE_LIMIT_GLOBAL and
+// MCP_RATE_LIMIT_SESSION are scoped to the HTTP subcommands, so a stdio user
+// hitting the limit had no flag to raise it. The e2e suite found this by doing
+// what a troubleshooting session does — a dozen tool calls in a couple of
+// seconds — and being refused partway through.
 func NewServer(cfg *config.Config, logger *log.Logger, opts ...server.ServerOption) (*server.MCPServer, error) {
 	provider, err := client.New(cfg, logger)
 	if err != nil {
@@ -145,21 +154,28 @@ func NewServer(cfg *config.Config, logger *log.Logger, opts ...server.ServerOpti
 	}
 
 	gate := client.NewGate(cfg.ReadOnly, logger)
-	limiter := client.NewRateLimiter(client.ParseRateLimits(cfg, logger), logger)
 
 	hooks := &server.Hooks{}
 	provider.RegisterHooks(hooks)
-	limiter.RegisterHooks(hooks)
 
 	defaultOpts := []server.ServerOption{
 		server.WithToolCapabilities(true),
 		server.WithResourceCapabilities(true, true),
 		server.WithPromptCapabilities(true),
 		server.WithRecovery(),
-		server.WithHooks(hooks),
-		server.WithToolHandlerMiddleware(limiter.Middleware()),
-		server.WithToolHandlerMiddleware(gate.Middleware()),
 	}
+
+	if cfg.IsHTTPMode() {
+		limiter := client.NewRateLimiter(client.ParseRateLimits(cfg, logger), logger)
+		limiter.RegisterHooks(hooks)
+		defaultOpts = append(defaultOpts, server.WithToolHandlerMiddleware(limiter.Middleware()))
+	}
+
+	// Hooks are registered after the limiter has had its chance to add its own.
+	defaultOpts = append(defaultOpts,
+		server.WithHooks(hooks),
+		server.WithToolHandlerMiddleware(gate.Middleware()),
+	)
 	opts = append(defaultOpts, opts...)
 
 	s := server.NewMCPServer("nomad-mcp-server", version.Version, opts...)

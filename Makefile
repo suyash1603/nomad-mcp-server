@@ -29,7 +29,8 @@ LDFLAGS = -ldflags="-s -w -X $(MODULE)/version.GitCommit=$(GIT_COMMIT) -X $(MODU
 ARCH = $(shell A=$$(uname -m); [ $$A = x86_64 ] && A=amd64; echo $$A)
 OS   = $(shell uname | tr '[:upper:]' '[:lower:]')
 
-.PHONY: all build clean deps fmt vet lint test test-race test-e2e test-http \
+.PHONY: all build clean deps fmt vet lint test test-verbose test-race test-cover \
+        test-e2e test-http test-all \
         docker-build docker-push docker-run-http run-stdio run-http run-http-secure \
         inspector tidy check help
 
@@ -68,24 +69,36 @@ lint:
 		echo "golangci-lint not installed; skipping. Install: https://golangci-lint.run/welcome/install/"; \
 	fi
 
-## test: run unit tests
+## test: run unit tests (Nomad is faked with httptest; no cluster needed)
 test:
+	$(GO) test ./...
+
+## test-verbose: run unit tests with per-test output
+test-verbose:
 	$(GO) test -v ./...
 
 ## test-race: run unit tests under the race detector
 test-race:
 	$(GO) test -race ./...
 
-## test-e2e: run end-to-end tests against a real 'nomad agent -dev'
+## test-cover: run unit tests and report coverage per package
+test-cover:
+	$(GO) test -cover ./...
+
+# The e2e targets start a throwaway 'nomad agent -dev' on unused ports, build
+# this binary, and drive it as a subprocess. They skip with an explanation if
+# Nomad is missing or is an Enterprise build, which cannot run -dev at all.
+
+## test-e2e: end-to-end tests against a real 'nomad agent -dev'
 test-e2e:
 	$(GO) test -v -tags e2e -timeout 10m ./e2e
 
-## test-http: check the health endpoint of a locally running HTTP server
+## test-http: end-to-end tests of the StreamableHTTP transport
 test-http:
-	@echo "Testing StreamableHTTP health endpoint..."
-	@curl -fsS http://127.0.0.1:8080/health && echo \
-		|| echo "Health check failed - is the server running? Try 'make run-http'"
-	@echo "MCP endpoint: http://127.0.0.1:8080/mcp"
+	$(GO) test -v -tags e2e -timeout 10m -run TestHTTP ./e2e
+
+## test-all: unit, race and end-to-end
+test-all: test-race test-e2e
 
 ## check: everything CI runs
 check: fmt vet test

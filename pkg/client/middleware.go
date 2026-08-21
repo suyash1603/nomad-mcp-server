@@ -126,25 +126,29 @@ func (h *securityHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func NomadContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			q := r.URL.Query()
-
-			for _, forbidden := range []string{
-				NomadTokenHeader, config.EnvNomadToken,
-				"token", "secret_id", "secretid",
-			} {
-				if q.Get(forbidden) != "" {
+			// Parameter names are normalised before comparison rather than
+			// matched literally. url.Values.Get is case-sensitive, so a literal
+			// list lets through every spelling nobody thought of — the e2e
+			// suite caught "nomad_token" passing while "NOMAD_TOKEN" and
+			// "token" were both blocked. Folding case and dropping separators
+			// collapses the whole family to one entry each.
+			for name, values := range r.URL.Query() {
+				if !hasValue(values) {
+					continue
+				}
+				switch normalizeParam(name) {
+				case "token", "nomadtoken", "xnomadtoken", "secretid", "authtoken", "acltoken":
 					logger.WithField("remote_ip", r.RemoteAddr).
+						WithField("param", name).
 						Warn("rejected request carrying a Nomad token in the query string")
 					http.Error(w,
 						"A Nomad token must not be passed as a query parameter; use the "+
 							NomadTokenHeader+" header.", http.StatusBadRequest)
 					return
-				}
-			}
 
-			for _, forbidden := range []string{config.EnvNomadAddr, "nomad_addr", "address"} {
-				if q.Get(forbidden) != "" {
+				case "nomadaddr", "address", "addr", "xnomadaddr":
 					logger.WithField("remote_ip", r.RemoteAddr).
+						WithField("param", name).
 						Warn("rejected request overriding the Nomad address via the query string")
 					http.Error(w,
 						"The Nomad address must not be passed as a query parameter.",
@@ -171,6 +175,34 @@ func NomadContextMiddleware(logger *log.Logger) func(http.Handler) http.Handler 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// normalizeParam folds a query parameter name to a comparable form: lower case
+// with separators removed, so "X-Nomad-Token", "nomad_token" and "nomadToken"
+// all become "xnomadtoken", "nomadtoken" and "nomadtoken" respectively.
+func normalizeParam(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range strings.ToLower(name) {
+		if r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// hasValue reports whether a query parameter was given a non-empty value.
+//
+// A bare "?token" with nothing after it discloses nothing and is not worth
+// refusing a request over.
+func hasValue(values []string) bool {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // header reads a header case-insensitively.

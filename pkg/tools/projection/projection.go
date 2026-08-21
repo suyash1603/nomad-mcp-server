@@ -108,23 +108,53 @@ func taskState(name string, ts *api.TaskState) TaskState {
 	out.Failed = ts.Failed
 	out.Restarts = ts.Restarts
 
-	// The last event is where a failure actually explains itself: "Exit code
-	// 1", "OOM Killed", "failed to start task". Everything before it is
-	// usually just the lifecycle leading up to the problem.
+	// The last event describes where the task ended up: "Not Restarting",
+	// "Terminated", "Killed". That is the right thing to report as its current
+	// state.
 	if n := len(ts.Events); n > 0 {
-		last := ts.Events[n-1]
-		if last != nil {
+		if last := ts.Events[n-1]; last != nil {
 			out.LastEvent = last.Type
 			out.LastReason = eventReason(last)
-			out.ExitCode = last.ExitCode
-			// A 137 is SIGKILL, which for a container almost always means the
-			// out-of-memory killer.
-			out.OOMKilled = last.ExitCode == 137 ||
-				strings.Contains(strings.ToLower(last.DisplayMessage), "out of memory")
+		}
+	}
+
+	// The exit code, though, is not on the last event. A task that failed often
+	// enough for Nomad to give up ends on "Not Restarting — Exceeded allowed
+	// attempts", which carries no exit code at all; the "Terminated" event that
+	// recorded the real one is further back. Reading only the last event
+	// therefore loses the exit code in precisely the case anyone cares about,
+	// and omitempty then hides the zero so nothing looks wrong.
+	//
+	// Found by the e2e suite against the batch-report example, whose "flaky"
+	// group exits 1 and is not restarted.
+	for i := len(ts.Events) - 1; i >= 0; i-- {
+		e := ts.Events[i]
+		if e == nil {
+			continue
+		}
+		if e.ExitCode != 0 || e.Type == "Terminated" {
+			out.ExitCode = e.ExitCode
+			out.OOMKilled = oomKilled(e)
+			break
 		}
 	}
 
 	return out
+}
+
+// oomKilled decides whether a terminating event was the out-of-memory killer.
+//
+// Nomad reports this three different ways depending on the driver, so all three
+// are checked: an explicit detail, the 137 that a SIGKILL becomes, and the
+// message text for drivers that only say it in prose.
+func oomKilled(e *api.TaskEvent) bool {
+	if e.Details["oom_killed"] == "true" {
+		return true
+	}
+	if e.ExitCode == 137 {
+		return true
+	}
+	return strings.Contains(strings.ToLower(e.DisplayMessage), "out of memory")
 }
 
 // eventReason picks the most informative field of a task event. Nomad populates

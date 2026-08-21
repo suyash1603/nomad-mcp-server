@@ -837,3 +837,161 @@ prompts.New(provider).Register(s)
 ```
 
 Three lines in `NewServer`, after the tools and before the read-only log line.
+
+---
+
+# The tests
+
+Three layers, three `make` targets, and one rule shared by all of them: a test
+that can pass while the thing it names is broken is worse than no test, because
+it also stops anyone from looking.
+
+    make test        unit — a fake Nomad, no cluster needed
+    make test-e2e    the built binary against a real `nomad agent -dev`
+    make test-http   the same, over the streamable-HTTP transport
+
+## `internal/nomadtest` — a fake Nomad worth trusting
+
+The tools are thin: call the Go client, project the result, map the error.
+Almost every bug they can have is in the projection or the mapping, and both
+are exercised by feeding the *real* `api.Client` canned responses. So
+`internal/nomadtest` stands up an `httptest` server speaking enough of Nomad's
+wire protocol that the genuine client cannot tell the difference.
+
+Two decisions make it useful rather than merely present.
+
+**The fixture is built from the real `api` structs.** Not JSON literals:
+
+```go
+s.JSON("/v1/jobs", []*api.JobListStub{{
+    ID: HealthyJob, Type: "service", Status: "running", …
+}})
+```
+
+A map literal encodes Nomad's field names by hand, and Nomad's are not always
+the obvious ones — `DimensionExhausted`, `ConstraintFiltered`,
+`ClientDescription`. A typo in a literal produces a zero value and a test that
+passes while asserting nothing. Marshalling the same structs the client will
+unmarshal removes that possibility entirely.
+
+**It records every request.** A tool that quietly drops the namespace, forgets
+to forward a filter, or never sends the pagination token still returns
+plausible-looking output. So the assertions that matter most are about what went
+*out*:
+
+```go
+h.ok("list_jobs", map[string]any{"namespace": "production"})
+require.Equal(t, "production", h.nomad.Last("/v1/jobs").Namespace())
+```
+
+The default fixture is a small coherent cluster — one server, one client node, a
+healthy job and a stuck one whose blocked evaluation carries a real constraint
+failure. Those two jobs exist because every troubleshooting tool in this server
+has exactly two halves, and both need a subject.
+
+## What the unit tests actually assert
+
+`pkg/tools/handlers_test.go` is grouped by what could go wrong rather than by
+tool:
+
+- **Projections** — the placement failure renders as prose naming the task group;
+  a stuck deployment is diagnosed as waiting on a human; a node returns its
+  allowlisted attributes and not the other three hundred.
+- **Disclosure** — `read_job` returns `DATABASE_PASSWORD` as a key and never its
+  value; `list_variables` returns paths and never contents; a 500 that echoes a
+  token back comes out `[REDACTED]`.
+- **Both gates** — a refused `read_variable` never reaches Nomad at all, and a
+  namespace outside the allowlist is refused *before* the request rather than
+  after.
+- **The wire** — namespace, filter, prefix and both pagination arguments are
+  asserted on the outgoing request; the token is asserted to be in
+  `X-Nomad-Token` and *not* in the query string.
+
+`pkg/tools/tools_test.go` keeps its old job — catalog-wide invariants, pointed at
+a dead address so it can never reach a network. The split is deliberate: those
+must not have a Nomad behind them, and these must.
+
+## `e2e/` — the built binary, a real agent
+
+Everything here is the code path a user gets. `TestMain` starts a throwaway
+`nomad agent -dev` on three ports nobody is using, builds the binary, and each
+test drives it as a subprocess over stdio.
+
+Driving the real binary rather than calling `NewServer` in-process is the point.
+Flag parsing, environment handling and stdout discipline are exactly what breaks
+on the day someone installs this, and none of them are reachable from a Go
+function call.
+
+The suite skips, with an explanation, when `nomad` is missing — and when it is an
+**Enterprise** build, which refuses `nomad agent -dev` outright with `invalid
+license config: empty license`. That error does not obviously point at the
+licence, and it cost an afternoon earlier in this project; detecting it turns a
+confusing failure into one sentence.
+
+`TestFullTroubleshootingPathOnRealJobs` submits the two real jobspecs from
+`examples/` through the `run_job` tool and then walks the exact chain the
+`troubleshoot_failing_job` prompt prescribes, asserting it terminates in an
+explanation:
+
+> task group "impossible": no nodes were eligible for evaluation at all, which
+> usually means the job's datacenters or node_pool match nothing in this cluster.
+
+It also checks that a resource read and the equivalent tool call return
+identical bytes — the same invariant the unit tests check against a fake, now
+against a real cluster.
+
+## `e2e/http_test.go` — the layer stdio does not have
+
+CORS, per-request Nomad settings lifted out of headers, session identity, and a
+refusal to bind anywhere public without TLS. None of it is reachable from the
+stdio tests, and all of it is what someone deploying this on a shared box
+depends on. The tests cover a full handshake and tool call over `/mcp`, the
+health endpoint (asserting it discloses no credentials), a foreign `Origin`
+being rejected, `0.0.0.0` without TLS refusing to start, and the read-only gate
+still applying.
+
+## Three bugs, and why they are interesting
+
+The suite earned its keep immediately. All three are recorded in
+recorded below; the third is the one worth internalising.
+
+**The rate limiter throttled stdio sessions.** A troubleshooting walk is a dozen
+tool calls in a couple of seconds; the per-session default of 5 rps with burst 10
+refused on the eleventh. And `MCP_RATE_LIMIT_GLOBAL`/`_SESSION` are scoped to the
+HTTP subcommands, so a stdio user hitting the limit had no flag to raise it — the
+server was enforcing a limit it only let you configure in a mode you were not in.
+Rate limiting now applies to the HTTP transport only.
+
+**The exit code vanished from failed tasks.** `taskState` read `ExitCode` from
+the last event. But a task that fails often enough for Nomad to give up ends on
+`Not Restarting — Exceeded allowed attempts`, which carries no exit code; the
+`Terminated` event holding the real one is behind it. `omitempty` then dropped
+the zero, so the output looked clean while having lost the single most useful
+fact about a failed task. The fix scans backwards for the most recent
+`Terminated` event. The fixture now reproduces that event order, so the unit
+suite catches it too.
+
+**`nomad_token` walked straight through the query-string guard.** The guard was
+a list of literals checked with `url.Values.Get`, which is case-sensitive. It
+caught `NOMAD_TOKEN` and `token`; it did not catch `nomad_token`, `nomadToken`
+or `x-nomad-token`. The existing unit test listed only the spellings that
+already worked, so it had been passing while the hole was open.
+
+The fix normalises instead of enumerating — fold case, drop `-`, `_` and `.`,
+compare against a normalised set — so one entry covers the whole family. There
+is a matching test for the other direction too, because a normaliser that starts
+matching `next_token` or `namespace` would be its own kind of bug.
+
+The lesson generalises past this one guard: **a security check written as a list
+of literals is only as good as the imagination of whoever wrote the list, and a
+test that reuses the same list proves nothing.** The only reason this was found
+is that the e2e suite was written separately and tried spellings the unit test
+had not.
+
+## Coverage
+
+52.1% of statements from the unit tests alone, measured with `-coverpkg` across
+the whole module. The per-package figure `go test -cover` prints for the tool
+subpackages reads 0.0%, which is an artefact: those packages have no test files
+of their own, and their tools are exercised from `pkg/tools`. The real figures
+are 28–63% per subpackage, and the e2e suite covers more on top.

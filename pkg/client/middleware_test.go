@@ -211,7 +211,16 @@ func TestHeaderLookupIsCaseInsensitive(t *testing.T) {
 // TestTokenInQueryStringIsRejected: a token in a URL leaks into proxy logs,
 // browser history and Referer headers. Rejecting loudly beats ignoring.
 func TestTokenInQueryStringIsRejected(t *testing.T) {
-	for _, param := range []string{"X-Nomad-Token", "NOMAD_TOKEN", "token", "secret_id"} {
+	// The spellings matter more than the count. These lookups used to be
+	// literal url.Values.Get calls, which are case-sensitive, so "nomad_token"
+	// sailed through while "NOMAD_TOKEN" and "token" were both blocked — and
+	// the original version of this test happened to list only the ones that
+	// worked. The e2e HTTP suite caught it.
+	for _, param := range []string{
+		"X-Nomad-Token", "x-nomad-token", "NOMAD_TOKEN", "nomad_token", "nomadToken",
+		"token", "TOKEN", "Token", "secret_id", "secretID", "SecretId",
+		"acl_token", "auth_token",
+	} {
 		t.Run(param, func(t *testing.T) {
 			next := &echoHandler{}
 			h := NomadContextMiddleware(quietLogger())(next)
@@ -232,7 +241,9 @@ func TestTokenInQueryStringIsRejected(t *testing.T) {
 // TestAddressInQueryStringIsRejected closes an SSRF hole: an attacker-supplied
 // address would make this server send its Nomad token to a host of their choice.
 func TestAddressInQueryStringIsRejected(t *testing.T) {
-	for _, param := range []string{"NOMAD_ADDR", "nomad_addr", "address"} {
+	for _, param := range []string{
+		"NOMAD_ADDR", "nomad_addr", "nomadAddr", "address", "ADDRESS", "addr",
+	} {
 		t.Run(param, func(t *testing.T) {
 			next := &echoHandler{}
 			h := NomadContextMiddleware(quietLogger())(next)
@@ -244,6 +255,40 @@ func TestAddressInQueryStringIsRejected(t *testing.T) {
 
 			require.Equal(t, http.StatusBadRequest, rec.Code)
 			require.False(t, next.called)
+		})
+	}
+}
+
+// TestValuelessParameterIsNotRejected keeps the guard from overreaching. A bare
+// "?token" with nothing after it discloses nothing, and refusing it would be a
+// confusing 400 for a request that did nothing wrong.
+func TestValuelessParameterIsNotRejected(t *testing.T) {
+	for _, query := range []string{"?token", "?token=", "?token=%20"} {
+		t.Run(query, func(t *testing.T) {
+			next := &echoHandler{}
+			h := NomadContextMiddleware(quietLogger())(next)
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp"+query, nil))
+
+			require.True(t, next.called, "an empty parameter is not a leak")
+			require.Equal(t, http.StatusOK, rec.Code)
+		})
+	}
+}
+
+// TestUnrelatedParametersPassThrough guards the other direction: normalising
+// names must not start matching things that are not credentials.
+func TestUnrelatedParametersPassThrough(t *testing.T) {
+	for _, param := range []string{"namespace", "region", "job_id", "next_token", "per_page"} {
+		t.Run(param, func(t *testing.T) {
+			next := &echoHandler{}
+			h := NomadContextMiddleware(quietLogger())(next)
+
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp?"+param+"=value", nil))
+
+			require.True(t, next.called, "%s is not a credential and must not be refused", param)
 		})
 	}
 }
