@@ -111,13 +111,18 @@ func Catalog(p *client.Provider) []server.ServerTool {
 	}
 }
 
-// InitTools registers the tool catalog on the MCP server.
+// InitTools registers the tool catalog on the MCP server and returns it.
 //
 // Mutating tools are registered even when the server is read-only. They are
 // refused at call time by the gate instead, so that tools/list describes the
 // server honestly and a blocked call returns an explanation rather than an
 // "unknown tool" error that looks like a bug.
-func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
+//
+// The catalog is returned because pkg/resources delegates to these same
+// handlers: a resource read is the same view as the equivalent tool call, and
+// passing the registered catalog along is what guarantees that rather than
+// merely intending it.
+func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []server.ServerTool {
 	tools := Catalog(p)
 
 	for _, t := range tools {
@@ -133,4 +138,6 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) {
 	p.Logger().WithField("tools", len(tools)).
 		WithField("mutating", len(gate.MutatingTools())).
 		Debug("registered tools")
+
+	return tools
 }

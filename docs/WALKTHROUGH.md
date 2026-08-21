@@ -458,3 +458,382 @@ No tools are registered, so `tools/list` still returns `[]` and
 `gate.MutatingTools()` is empty. The gate, limiter, provider and error mapping
 are all wired into `NewServer` and waiting for the tool layer to give them something to
 guard.
+
+---
+
+# The read tools
+
+Thirty-seven tools across seven domain packages. The interesting part is not any
+one of them; it is the handful of decisions that repeat in all thirty-seven, so
+this section covers those and then points at the places where a domain breaks
+the pattern for a reason.
+
+## Why `pkg/tools/<domain>/` and not one file per domain
+
+One file per domain is the obvious split. Seventeen job tools in one
+file is about 1,500 lines, and `vault-mcp-server` does not actually do that
+either — it uses a package per domain. So: `pkg/tools/jobs/`, `pkg/tools/allocs/`,
+`pkg/tools/nodes/`, `pkg/tools/scheduler/`, `pkg/tools/catalog/`,
+`pkg/tools/system/`, `pkg/tools/variables/`, with roughly one file per tool
+inside each.
+
+`pkg/tools/tools.go` is the only file that knows the whole catalog:
+
+```go
+func Catalog(p *client.Provider) []server.ServerTool
+func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []server.ServerTool
+```
+
+`Catalog` is exported purely so the tests can walk every tool without starting a
+server. That is also what makes the catalog-wide invariants in
+`pkg/tools/tools_test.go` possible — every tool annotated, every name
+well-formed, every description long enough to be usable.
+
+## The shape every tool has
+
+```go
+func ListDeployments(p *client.Provider) server.ServerTool {
+	opts := []mcp.ToolOption{
+		mcp.WithDescription("…"),
+		utils.ReadOnlyTool(),
+		utils.NamespaceParam(),
+		utils.RegionParam(),
+		utils.PrefixParam("deployments"),
+		utils.FilterParam(`Status == "running"`),
+	}
+	opts = append(opts, utils.PageParams()...)
+
+	return server.ServerTool{
+		Tool:    mcp.NewTool("list_deployments", opts...),
+		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) { … },
+	}
+}
+```
+
+Five things happen in every handler, in this order:
+
+1. `p.ResolveNamespace(ctx, req.GetString("namespace", ""))` — applies the
+   allowlist. This runs **before** the Nomad client is even fetched, so a
+   forbidden namespace never produces a request.
+2. `p.FromContext(ctx)` — the per-session client, so an HTTP caller's own
+   `X-Nomad-Token` is used rather than the server's.
+3. Build `api.QueryOptions`, with `utils.PageFrom(req).Apply(…)` layering
+   pagination on top.
+4. On error, `utils.MapError` with an `ErrorContext` that names the operation,
+   the capability the endpoint needs, and the list tool to fall back to.
+5. Project into a small struct and return it via `utils.JSONResult`.
+
+Step 4 is the one worth dwelling on. Nomad's 403 body is *always* the string
+`Permission denied` and never names the capability that was missing — this was
+checked against a live agent, not assumed, and the table of what was observed is
+against a live agent. So the tool has to supply that itself:
+
+```go
+Capability: "read-job",
+```
+
+Without it the best the server could say is "permission denied", which tells the
+user nothing they can fix.
+
+## Projection, not passthrough
+
+`pkg/tools/projection/projection.go` holds the three shapes that show up
+everywhere: `AllocStub`, `Eval` and `Deploy`. Nomad's `AllocationListStub` has
+about forty fields; `AllocStub` has sixteen, and adds two Nomad does not have —
+`short_id`, because that is what the `nomad` CLI shows and what a human will
+paste back, and `needs_attention`, a boolean derived from the task states so a
+model scanning a list does not have to re-derive it per item.
+
+`projection.Evaluation` does the most work. Nomad reports a placement failure as
+`FailedTGAllocs`, a map of task group to `*api.AllocationMetric` full of counters
+like `ClassFiltered` and `DimensionExhausted`. Counters are not an explanation,
+so `failure()` turns them into one:
+
+> task group "impossible": no nodes were eligible for evaluation at all, which
+> usually means the job's datacenters or node_pool match nothing in this cluster.
+
+That sentence is the whole point of the tool. A model reading
+`{"NodesEvaluated": 0}` has to know a great deal about Nomad's scheduler to get
+anywhere; a model reading that sentence does not.
+
+## Truncation has a direction
+
+`utils.TruncateTail` keeps the **end** of a string and `TruncateHead` keeps the
+beginning. Log reads use `TruncateTail`, because a crash message is the last
+thing a process writes, and a naive head-truncation would reliably discard the
+only line anyone wanted. `NOMAD_MCP_MAX_LOG_BYTES` (64 KiB by default) caps it,
+and the result carries `truncated`, `original_bytes` and `returned_bytes` so the
+model knows it is looking at a slice.
+
+## Where the domains break the pattern
+
+**`system.GetAgentConfig`** is an allowlist, not a dump. `/v1/agent/self`
+includes TLS file paths and the Consul and Vault integration blocks; returning
+it wholesale would put all of that into the model's context for no benefit. The
+tool names the fields it will return and ignores the rest.
+
+**`jobs.ReadJob`** lists task environment variables **by key only**. A jobspec's
+`env` block is a routine place to find a password, and the key alone is enough
+to answer "is this configured".
+
+**`jobs.PlanJob` and `jobs.ParseJobHCL`** are annotated read-only, because they
+change nothing — but Nomad requires `namespace:submit-job` or
+`namespace:plan-job` for plan and `namespace:parse-job` for parse. A token with
+only `read-job` gets a 403 from a tool the server has just told it is read-only,
+which looks like a bug. `plan.go` carries an `aclNote` const that is appended to
+both descriptions and to their error mapping.
+
+**`allocs`** is the one domain that talks to client nodes rather than servers.
+`/v1/client/…` calls go to the node the allocation is on, and the Go client
+falls back to a server if the node is unreachable — costing up to
+`api.ClientConnTimeout` per call. Log reads therefore carry their own 30-second
+`logReadTimeout`. Logs and file contents are also explicitly labelled as
+untrusted in the output, because they are written by the workload.
+
+**`catalog.ListVolumes` / `ReadVolume`** take a `type` argument that is either
+`csi` or `host`. A single volume tool pair looks obvious, but Nomad serves CSI volumes
+and dynamic host volumes from two different APIs with two different shapes, and
+pretending otherwise would mean silently returning only half the volumes.
+
+**`variables.ListVariables`** returns paths and never values — not as a filter,
+but because Nomad's list endpoint genuinely does not include them. That is what
+makes it safe to leave always-on while `read_variable` stays gated.
+
+## Pagination
+
+Every list tool takes `page_size` and `next_token`, and returns `next_token` when
+more results exist. `utils.NextTokenNote` turns that into a sentence in the
+`note` field, because a model that ignores a JSON field will usually still read
+prose telling it there is more.
+
+---
+
+# The write tools
+
+Seventeen tools, taking the catalog to fifty-four. Every one of them is refused
+in the default configuration, and the test suite proves it for each individually.
+
+## The annotation is the mechanism
+
+```go
+utils.MutatingTool(destructive, idempotent bool) mcp.ToolOption
+```
+
+sets `ReadOnlyHint: false` plus the destructive and idempotent hints. The gate
+in `pkg/client/readonly.go` classifies on exactly that annotation:
+
+```go
+readOnly := tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint
+g.mutating[tool.Name] = !readOnly
+```
+
+A tool with no annotation is treated as mutating and refused. Forgetting the
+annotation therefore breaks the tool loudly in read-only mode rather than
+quietly opening a hole, which is the correct direction for that mistake to fail
+in. `IsMutating` returns `true` for a name it has never seen, for the same
+reason.
+
+Mutating tools are registered even when the server is read-only. `tools/list`
+then describes the server honestly, and a blocked call returns an explanation
+rather than "unknown tool", which would look like a bug rather than a policy.
+
+## What the refusal says
+
+`refusalMessage` names the tool, says the server is read-only, gives **both**
+the environment variable and the flag that would change it, and says *do not
+retry*. That last part matters: without it a model will try the same call two or
+three more times, and each attempt costs a turn.
+
+## Choosing the two hints
+
+`destructive` means the call can discard state or interrupt running work.
+`idempotent` means repeating it changes nothing further. Clients use both to
+decide whether to ask the user before proceeding, so they are chosen per tool
+rather than set to a blanket value:
+
+| Tool | destructive | idempotent | Why |
+|---|---|---|---|
+| `run_job` | false | false | Creates or updates; a second identical submit is a new version |
+| `stop_job` | true | true | Interrupts running work; stopping twice is the same |
+| `set_node_eligibility` | false | true | Pure state flag |
+| `drain_node` | true | false | Moves running allocations; the deadline restarts |
+| `delete_variable` | true | true | Discards a secret |
+
+A separate test asserts that every tool marked destructive says so in its own
+description as well. Four of them did not, when the test was first written —
+`scale_task_group`, `revert_job_version`, `stop_allocation` and
+`fail_deployment`. The descriptions were fixed, not the test.
+
+## `write_variable` replaces, and says so
+
+Nomad's variable write endpoint replaces the whole item set; it does not merge.
+A model that reads a variable, changes one key and writes it back would silently
+delete every key it did not include. The tool cannot change the endpoint's
+semantics, so it does the next best thing: it reads the existing variable first,
+diffs the key sets, and returns any dropped keys in `keys_removed` with a
+warning. Silently losing a key from a secret store is the worst failure mode
+available to this server, and it should be impossible to do accidentally.
+
+## No ACL tools
+
+Both prior-art Nomad MCP servers expose ACL token creation; one of them can mint
+a management token straight into the model's context. That warrants asking
+before exposing anything that writes ACL tokens or policies. The answer here was
+to not build them at all, so there is nothing to ask about. This is recorded in
+a deliberate decision rather than an omission.
+
+---
+
+# Resources and prompts
+
+Tools are what the model decides to call. Resources and prompts are what the
+*user* reaches for: a resource is the paperclip menu or an `@`-mention, a prompt
+is a slash command. Same cluster, different door.
+
+## `pkg/resources` — one renderer, two front doors
+
+The obvious way to build this is to write a second set of projections that turn
+a Nomad job into resource contents. That is a mistake, and it is a slow one: the
+two sets drift within a release or two, and a user who attaches a job then gets
+a subtly different view from the one the model gets when it calls `read_job` on
+the same job.
+
+So nothing here projects Nomad. Each resource delegates to the tool that already
+knows how to render that object and returns its JSON verbatim:
+
+```go
+func New(p *client.Provider, catalog []server.ServerTool) *Registrar
+```
+
+The catalog is passed in rather than rebuilt, which is why `InitTools` now
+returns it. `TestResourceAndToolAgreeExactly` reads `nomad://jobs/default/web`
+and calls `read_job` on the same job, and asserts the two are byte-identical.
+
+Delegating also means resources inherit the namespace allowlist, the redaction
+and the error mapping for free, rather than needing them re-applied.
+`TestNamespaceAllowlistCoversResources` pins that down.
+
+### What is registered
+
+| URI | Backed by |
+|---|---|
+| `nomad://cluster` | `get_cluster_status` |
+| `nomad://jobs` | `list_jobs` |
+| `nomad://jobs/{namespace}/{job_id}` | `read_job` |
+| `nomad://allocs/{alloc_id}` | `read_allocation` |
+| `nomad://nodes/{node_id}` | `read_node` |
+
+The requirements name only the three templates. The two concrete resources are
+an addition, and the reason is practical: several MCP clients never call
+`resources/templates/list`, so a server with nothing but templates shows an
+empty attachment menu and looks broken. The indexes give those clients somewhere
+to start, and their descriptions name the URI shapes.
+
+### Everything here is read-only, structurally
+
+A resource has no destructive-hint annotation and no confirmation flow in any
+client — attaching one is a click. So a mutating resource would be a cluster
+change a user could trigger from an autocomplete list. There will not be one,
+and `TestNoResourceCanChangeTheCluster` enforces it against a ledger that
+`Register` builds as it wires each resource, rather than a list maintained
+alongside it.
+
+### The `[]string` trap
+
+This one cost a debugging round. mcp-go matches a resource URI against the
+template with `yosida95/uritemplate`, then copies the matched value into
+`request.Params.Arguments`:
+
+```go
+request.Params.Arguments[name] = value.V
+```
+
+`Value.V` is a **`[]string`** — RFC 6570 variables can expand to lists, so even a
+plain `{job_id}` arrives as a one-element slice. The first version of this
+package asserted `.(string)`, which silently yielded `""`, and every templated
+read failed as "missing segment" while the URI matching underneath was working
+perfectly. `templateVar` now handles `string`, `[]string` and `[]any`, and
+`TestTemplateVarUnwrapsURITemplateValues` is there so it stays handled.
+
+### Errors become errors
+
+A tool reports a recoverable failure through `IsError` on the result, because
+the model is expected to read it and try something else. A resource read has no
+such loop — the client asked for one URI and either gets it or does not — so
+`call()` turns a tool error into a real Go error. The message is still the
+mapped, redacted one, so a bad URI produces:
+
+> No job named "does-not-exist" in namespace "default". Try list_jobs to see
+> what exists, or check whether it lives in a different namespace.
+
+rather than a bare 404.
+
+## `pkg/prompts` — procedure, not capability
+
+Two prompts, and they make no API calls at all. That is deliberate:
+`explain_cluster_health` is most useful precisely when the cluster is
+unreachable, and a prompt that failed to render because Nomad was down would be
+useless at the one moment it was needed. The model does the fetching.
+
+Both prompts open with two things the model would otherwise have to discover the
+hard way:
+
+- **The server mode.** Told read-only up front, the model produces
+  recommendations; left to discover it by being refused, it wastes a turn and
+  the user reads the refusal as a malfunction. When writes *are* enabled the
+  note says so and still says "diagnose first" — restarting a failing allocation
+  destroys the evidence that would have explained it.
+- **That Nomad's output is untrusted.** Job metadata, task names and log output
+  are written by the workloads. The prompt says to treat all of it as data, and
+  to report an injection attempt as a finding rather than acting on it or
+  silently ignoring it.
+
+### `troubleshoot_failing_job`
+
+Arguments: `job_id` (required), `namespace`, `symptom`.
+
+The procedure exists because of one branch that is not obvious and that a model
+will get wrong left to itself. Nomad keeps *"the scheduler could not place
+this"* and *"the task ran and then died"* in completely different objects, and
+when placement fails there is no allocation, so there are no logs. A model that
+starts at the logs finds nothing and concludes the job is fine.
+
+So step 2 is `read_job_summary`, and it forks:
+
+- allocations exist but are unhealthy → allocations, then logs
+- zero allocations, or fewer than asked for → **evaluations**, and explicitly
+  *not* logs
+
+Walked against the `unplaceable` example on a live agent, the chain lands on:
+
+> task group "impossible": no nodes were eligible for evaluation at all, which
+> usually means the job's datacenters or node_pool match nothing in this cluster.
+
+Both `read_job_summary` and `list_job_allocations` also point at
+`list_job_evaluations` in their own `note` fields, so a model that ignores the
+prompt still gets nudged onto the same path.
+
+### `explain_cluster_health`
+
+One optional `namespace`, which scopes only the job-level checks; server and
+node health are cluster-wide.
+
+The ordering rule here is that the first two checks make the rest meaningless if
+they are wrong. No leader means nothing can be scheduled and the rest is noise,
+so that is checked first and reported alone. Version skew across servers is a
+half-finished upgrade and is worth flagging even when nothing looks broken.
+
+It also tells the model how to read a *failure* of one of these calls: a 403 is
+a token-scope problem and not a cluster problem, and an Enterprise-only endpoint
+is not a finding at all. Both are things this server will genuinely return
+against a Community Edition cluster.
+
+### Wiring
+
+```go
+catalog := tools.InitTools(s, provider, gate)
+resources.New(provider, catalog).Register(s)
+prompts.New(provider).Register(s)
+```
+
+Three lines in `NewServer`, after the tools and before the read-only log line.

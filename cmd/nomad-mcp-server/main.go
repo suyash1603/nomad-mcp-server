@@ -24,6 +24,8 @@ import (
 
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
 	"github.com/suyash1603/nomad-mcp-server/pkg/config"
+	"github.com/suyash1603/nomad-mcp-server/pkg/prompts"
+	"github.com/suyash1603/nomad-mcp-server/pkg/resources"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools"
 	"github.com/suyash1603/nomad-mcp-server/pkg/utils"
 	"github.com/suyash1603/nomad-mcp-server/version"
@@ -161,7 +163,13 @@ func NewServer(cfg *config.Config, logger *log.Logger, opts ...server.ServerOpti
 	opts = append(defaultOpts, opts...)
 
 	s := server.NewMCPServer("nomad-mcp-server", version.Version, opts...)
-	tools.InitTools(s, provider, gate)
+	catalog := tools.InitTools(s, provider, gate)
+
+	// Resources reuse the registered tool handlers rather than projecting Nomad
+	// a second time, so an @-mentioned job and a read_job call return the same
+	// bytes. Prompts are static text and take nothing but the provider.
+	resources.New(provider, catalog).Register(s)
+	prompts.New(provider).Register(s)
 
 	if cfg.ReadOnly {
 		logger.WithField("mutating_tools", len(gate.MutatingTools())).
