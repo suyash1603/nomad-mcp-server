@@ -109,22 +109,7 @@ func checkConnection(ctx context.Context, req mcp.CallToolRequest, p *client.Pro
 	// Reachability. Everything downstream is meaningless if this fails, so its
 	// error is mapped in full rather than summarised.
 	leader, leaderErr := nomad.Status().Leader()
-	switch {
-	case leaderErr == nil:
-		report.Reached = true
-		detail := "Connected. The cluster's leader is " + leader + "."
-		status := "ok"
-		if leader == "" {
-			status, detail = "warn", "Connected, but the cluster reports no leader."
-		}
-		report.Checks = append(report.Checks, checkResult{
-			Check:  "reachability",
-			Status: status,
-			Detail: detail,
-			Fix: map[bool]string{true: "", false: "Nothing can be scheduled without a leader. " +
-				"Check that a quorum of servers is running and can reach each other."}[leader != ""],
-		})
-	default:
+	if leaderErr != nil {
 		report.Checks = append(report.Checks, checkResult{
 			Check:  "reachability",
 			Status: "fail",
@@ -134,6 +119,23 @@ func checkConnection(ctx context.Context, req mcp.CallToolRequest, p *client.Pro
 			}, p.Redactor()),
 			Fix: reachabilityFix(cfg.NomadAddr),
 		})
+	} else {
+		report.Reached = true
+
+		// Reached but leaderless is its own diagnosis, and a distinct one:
+		// the connection is fine and nothing will schedule.
+		check := checkResult{
+			Check:  "reachability",
+			Status: "ok",
+			Detail: "Connected. The cluster's leader is " + leader + ".",
+		}
+		if leader == "" {
+			check.Status = "warn"
+			check.Detail = "Connected, but the cluster reports no leader."
+			check.Fix = "Nothing can be scheduled without a leader. Check that a quorum of " +
+				"servers is running and can reach each other."
+		}
+		report.Checks = append(report.Checks, check)
 	}
 
 	report.Checks = append(report.Checks, checkTLS(cfg))
@@ -232,8 +234,8 @@ func reachabilityFix(addr string) string {
 
 	if u, err := url.Parse(addr); err == nil {
 		host := u.Hostname()
-		switch {
-		case host == "127.0.0.1" || host == "localhost":
+		switch host {
+		case "127.0.0.1", "localhost", "::1":
 			fix += "; and that Nomad really is on this machine — in a container, localhost is " +
 				"the container, so use host.docker.internal (macOS, Windows) or --network host " +
 				"(Linux)"
