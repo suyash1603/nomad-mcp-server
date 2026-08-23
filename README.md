@@ -550,6 +550,34 @@ nomad-mcp-server streamable-http --transport-port 8080
 
 ---
 
+## How this compares
+
+There are other community MCP servers for Nomad, and no official HashiCorp one.
+They are worth a look — this project makes a few different choices, and they are
+the reason it exists rather than a claim that the alternatives are wrong:
+
+- **Safe by default.** `NOMAD_MCP_READ_ONLY=true` is the default. Every mutating
+  tool is refused by the framework rather than by each tool, with a message
+  saying how to enable writes.
+- **The typed Go client throughout.** Every operation goes through
+  `github.com/hashicorp/nomad/api`, so there is no parallel set of hand-written
+  request and response types to keep in step with Nomad.
+- **Scoping as a first-class control.** A namespace allowlist enforced before
+  the request is made, a separate gate for reading Variable *values*, and a byte
+  cap on logs and file reads.
+- **Annotations that mean something.** `readOnlyHint` on reads,
+  `destructiveHint` and `idempotentHint` on writes, so a client that shows a
+  confirmation prompt has something real to base it on.
+- **Errors that name the fix.** A 403 says which capability your token is
+  missing and in which namespace; a 404 points at the tool that lists what does
+  exist; a refused connection names the address it tried.
+- **Output shaped for a model.** Trimmed projections rather than raw API
+  structs, and real pagination with `next_token` on every list tool.
+- **No ACL tooling, deliberately.** No tool mints, reads or deletes Nomad ACL
+  tokens or policies, in any form. See [docs/SECURITY.md](docs/SECURITY.md).
+- **Deliberate parity with `vault-mcp-server`** — same layout, flags, env var
+  names and subcommands, so knowing one means knowing the other.
+
 ## Documentation
 
 | Document | For |
@@ -560,9 +588,7 @@ nomad-mcp-server streamable-http --transport-port 8080
 | [docs/HCDIAG.md](docs/HCDIAG.md) | Support-bundle collection: enabling it, what it gathers, and handling the result |
 | [docs/TESTING.md](docs/TESTING.md) | The full copy-pasteable test script, every path |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model: token scope, prompt injection, what a compromised client gets |
-| [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) | Narrated tour of the entire codebase |
-| [docs/TESTING.md](docs/TESTING.md) | The full copy-pasteable test script |
-| [docs/SECURITY.md](docs/SECURITY.md) | Threat model and safety defaults |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Guided tour of the codebase, layer by layer |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add a tool |
 
 ---

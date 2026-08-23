@@ -1,10 +1,8 @@
-# Walkthrough
+# Architecture
 
-A narrated tour of the codebase, file by file: what each piece does and why it
-is the way it is. Appended to at every phase, so it stays a tour rather than a
-changelog.
-
-Covers the skeleton.
+A guided tour of the codebase, layer by layer: what each piece does and why it
+is the way it is. Read it before adding a tool — it will save you reading the
+source cold.
 
 ---
 
@@ -58,8 +56,8 @@ docs/                   this file and its siblings
 This mirrors `hashicorp/vault-mcp-server` deliberately — same layout, same
 libraries, same flag names — so a HashiCorp maintainer reading it recognises
 everything. `pkg/config/` is the one addition; upstream reads `os.Getenv` inline
-at each use site, which does not satisfy the "flag beats env, for every setting"
-requirement that a flag beats an environment variable.
+at each use site, which does not satisfy the rule this project holds to: a flag
+beats an environment variable, for every setting.
 
 ---
 
@@ -83,7 +81,7 @@ wall clock, so building the same commit twice produces the same output.
 
 This is the most opinionated file in the skeleton, so it gets the most space.
 
-The requirement is that every setting is reachable three ways — a CLI flag, an
+Every setting is reachable three ways — a CLI flag, an
 environment variable, and a default — with **flag beating env beating default**.
 Written by hand that is four things to keep in sync per setting (flag
 declaration, viper binding, env binding, default) across ~25 settings. They
@@ -245,12 +243,12 @@ sink, one level.
 
 ## `pkg/tools/tools.go` — the catalog
 
-Currently a stub: `InitTools` registers nothing yet. Two decisions are already
-encoded in its doc comment, because they shape every later phase:
+`InitTools` is where the whole catalog is assembled. Two decisions are encoded
+in its doc comment, because they shape every domain package:
 
 - **One subpackage per domain, one file per tool**, matching what
-  `vault-mcp-server` actually does. One file per *domain* is the obvious split; jobs alone
-  is 17 tools, which would be a ~1500-line file.
+  `vault-mcp-server` actually does. One file per *domain* is the obvious split,
+  but jobs alone is 17 tools, which would be a ~1500-line file.
 - **Mutating tools are registered even in read-only mode**, and refused at call
   time. Hiding them would make `tools/list` lie about the server's shape, and the
   model would get "no such tool" — indistinguishable from a bug — instead of an
@@ -430,8 +428,8 @@ one observed fact:
 > **Nomad's 403 body is only ever the string `Permission denied`.**
 
 Verified against Nomad 2.0.5 OSS with ACLs enabled. Nomad never names the missing
-capability, so the "your NOMAD_TOKEN lacks capability X in namespace Y" message is
-impossible to produce from the error alone. `ErrorContext` is how the tool
+capability, so the "your NOMAD_TOKEN lacks capability X in namespace Y" message
+is impossible to produce from the error alone. `ErrorContext` is how the tool
 supplies what the error cannot: the capability its endpoint documents, the
 namespace, the resource kind and name, and the tool to run next.
 
@@ -525,8 +523,8 @@ Five things happen in every handler, in this order:
 
 Step 4 is the one worth dwelling on. Nomad's 403 body is *always* the string
 `Permission denied` and never names the capability that was missing — this was
-checked against a live agent, not assumed, and the table of what was observed is
-against a live agent. So the tool has to supply that itself:
+checked against a live agent, not assumed. So the tool has to supply that
+itself:
 
 ```go
 Capability: "read-job",
@@ -591,8 +589,9 @@ falls back to a server if the node is unreachable — costing up to
 untrusted in the output, because they are written by the workload.
 
 **`catalog.ListVolumes` / `ReadVolume`** take a `type` argument that is either
-`csi` or `host`. A single volume tool pair looks obvious, but Nomad serves CSI volumes
-and dynamic host volumes from two different APIs with two different shapes, and
+`csi` or `host`. A single volume tool pair looks like the obvious shape, but
+Nomad serves CSI volumes and dynamic host volumes from two different APIs with
+two different shapes, and
 pretending otherwise would mean silently returning only half the volumes.
 
 **`variables.ListVariables`** returns paths and never values — not as a filter,
@@ -678,10 +677,9 @@ available to this server, and it should be impossible to do accidentally.
 ## No ACL tools
 
 Both prior-art Nomad MCP servers expose ACL token creation; one of them can mint
-a management token straight into the model's context. That warrants asking
-before exposing anything that writes ACL tokens or policies. The answer here was
-to not build them at all, so there is nothing to ask about. This is recorded in
-a deliberate decision rather than an omission.
+a management token straight into the model's context. The decision here was to
+not build them at all, so there is nothing to gate and nothing to get wrong. It
+is a deliberate exclusion, not an oversight.
 
 ---
 
@@ -724,8 +722,8 @@ and the error mapping for free, rather than needing them re-applied.
 | `nomad://allocs/{alloc_id}` | `read_allocation` |
 | `nomad://nodes/{node_id}` | `read_node` |
 
-The requirements name only the three templates. The two concrete resources are
-an addition, and the reason is practical: several MCP clients never call
+The three templates are the core of it. The two concrete resources on top are
+there for a practical reason: several MCP clients never call
 `resources/templates/list`, so a server with nothing but templates shows an
 empty attachment menu and looks broken. The indexes give those clients somewhere
 to start, and their descriptions name the URI shapes.
@@ -953,8 +951,8 @@ still applying.
 
 ## Three bugs, and why they are interesting
 
-The suite earned its keep immediately. All three are recorded in
-recorded below; the third is the one worth internalising.
+The suite earned its keep immediately. All three are in the changelog; the
+third is the one worth internalising.
 
 **The rate limiter throttled stdio sessions.** A troubleshooting walk is a dozen
 tool calls in a couple of seconds; the per-session default of 5 rps with burst 10

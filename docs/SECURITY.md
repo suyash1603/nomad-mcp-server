@@ -75,7 +75,7 @@ Two capability notes that will otherwise confuse you:
 - **A Nomad 403 body is only ever the string `Permission denied`.** It never
   names the missing capability. Every tool therefore declares the capability its
   endpoint needs, so the error can tell you what to grant. Verified against a
-  live agent — see [PROGRESS.md](PROGRESS.md).
+  live agent.
 
 ### Token handling
 
