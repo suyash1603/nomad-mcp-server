@@ -87,22 +87,39 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 // and a derived test would still pass. Comparing against a literal list is what
 // catches that.
 var expectedMutatingTools = []string{
+	"apply_recommendations",
 	"create_namespace",
+	"create_node_pool",
+	"create_quota",
 	"delete_namespace",
+	"delete_node_pool",
+	"delete_quota",
+	"delete_sentinel_policy",
 	"delete_variable",
+	"dismiss_recommendations",
 	"dispatch_parameterized_job",
 	"drain_node",
+	"edit_job",
 	"fail_deployment",
+	"force_evaluate_node",
 	"force_periodic_job",
+	"pause_deployment",
 	"promote_deployment",
+	"purge_node",
 	"restart_allocation",
+	"restart_node_allocations",
 	"revert_job_version",
 	"run_job",
 	"scale_task_group",
+	"set_deployment_alloc_health",
 	"set_node_eligibility",
+	"set_node_meta",
+	"set_scheduler_config",
 	"signal_allocation",
 	"stop_allocation",
 	"stop_job",
+	"unblock_deployment",
+	"write_sentinel_policy",
 	"write_variable",
 }
 
@@ -123,22 +140,39 @@ var expectedHints = []struct {
 	destructive bool
 	idempotent  bool
 }{
+	{"apply_recommendations", true, false},
 	{"create_namespace", false, true},
+	{"create_node_pool", false, true},
+	{"create_quota", false, true},
 	{"delete_namespace", true, true},
+	{"delete_node_pool", true, true},
+	{"delete_quota", true, true},
+	{"delete_sentinel_policy", true, true},
 	{"delete_variable", true, true},
+	{"dismiss_recommendations", false, true},
 	{"dispatch_parameterized_job", false, false},
 	{"drain_node", true, false},
+	{"edit_job", true, false},
 	{"fail_deployment", true, true},
+	{"force_evaluate_node", false, true},
 	{"force_periodic_job", false, false},
+	{"pause_deployment", true, true},
 	{"promote_deployment", true, true},
+	{"purge_node", true, true},
 	{"restart_allocation", true, true},
+	{"restart_node_allocations", true, true},
 	{"revert_job_version", true, false},
 	{"run_job", true, false},
 	{"scale_task_group", true, true},
+	{"set_deployment_alloc_health", true, true},
 	{"set_node_eligibility", false, true},
+	{"set_node_meta", false, true},
+	{"set_scheduler_config", true, true},
 	{"signal_allocation", true, false},
 	{"stop_allocation", true, false},
 	{"stop_job", true, false},
+	{"unblock_deployment", true, true},
+	{"write_sentinel_policy", true, true},
 	{"write_variable", true, true},
 }
 
@@ -351,6 +385,6 @@ func TestCatalogSize(t *testing.T) {
 	p := testProvider(t, true)
 	all := Catalog(p)
 
-	require.GreaterOrEqual(t, len(all), 54, "tools appear to have gone missing from the catalog")
-	require.Equal(t, len(expectedMutatingTools), 17)
+	require.GreaterOrEqual(t, len(all), 81, "tools appear to have gone missing from the catalog")
+	require.Equal(t, len(expectedMutatingTools), 34)
 }

@@ -119,3 +119,45 @@ func IsEnterpriseTool(t mcp.Tool) bool {
 	v, ok := t.Meta.AdditionalFields[metaKeyEnterprise].(bool)
 	return ok && v
 }
+
+// StringSlice reads an array-of-strings argument from a tool call.
+//
+// MCP arguments arrive as []any regardless of the declared schema, so every
+// element is type-asserted individually. Non-string elements and empty strings
+// are dropped rather than causing an error: a model that sends one bad element
+// in a list of allocation IDs is better served by acting on the good ones than
+// by a rejection it has to guess how to fix.
+func StringSlice(req mcp.CallToolRequest, name string) []string {
+	raw, ok := req.GetArguments()[name].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// StringMap reads a flat object-of-strings argument from a tool call.
+func StringMap(req mcp.CallToolRequest, name string) map[string]string {
+	raw, ok := req.GetArguments()[name].(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}

@@ -9,17 +9,27 @@
 package tools
 
 import (
+	"context"
+	"time"
+
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/allocs"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/catalog"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/enterprise"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/jobs"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/nodes"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/scheduler"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/system"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/variables"
+	"github.com/suyash1603/nomad-mcp-server/pkg/utils"
 )
+
+// editionProbeTimeout bounds the startup probe. Registration must not wait on
+// an unreachable cluster: stdio in particular has a client on the other end
+// expecting an initialize response.
+const editionProbeTimeout = 5 * time.Second
 
 // Catalog returns every tool the server exposes.
 //
@@ -33,8 +43,16 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		system.GetClusterStatus(p),
 		system.ListRegions(p),
 		system.ListNodePools(p),
+		system.ReadNodePool(p),
 		system.GetAgentConfig(p),
+		system.GetSchedulerConfig(p),
+		system.CheckConnection(p),
 		system.Search(p),
+
+		// System and cluster (write).
+		system.CreateNodePool(p),
+		system.DeleteNodePool(p),
+		system.SetSchedulerConfig(p),
 
 		// Jobs (read).
 		jobs.ListJobs(p),
@@ -51,6 +69,7 @@ func Catalog(p *client.Provider) []server.ServerTool {
 
 		// Jobs (write).
 		jobs.RunJob(p),
+		jobs.EditJob(p),
 		jobs.StopJob(p),
 		jobs.ScaleTaskGroup(p),
 		jobs.RevertJobVersion(p),
@@ -74,10 +93,15 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		nodes.ListNodes(p),
 		nodes.ReadNode(p),
 		nodes.ListNodeAllocations(p),
+		nodes.GetNodeStats(p),
 
 		// Nodes (write).
 		nodes.DrainNode(p),
 		nodes.SetNodeEligibility(p),
+		nodes.RestartNodeAllocations(p),
+		nodes.ForceEvaluateNode(p),
+		nodes.SetNodeMeta(p),
+		nodes.PurgeNode(p),
 
 		// Deployments and evaluations (read).
 		scheduler.ListDeployments(p),
@@ -88,6 +112,9 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		// Deployments (write).
 		scheduler.PromoteDeployment(p),
 		scheduler.FailDeployment(p),
+		scheduler.PauseDeployment(p),
+		scheduler.UnblockDeployment(p),
+		scheduler.SetDeploymentAllocHealth(p),
 
 		// Namespaces, services and volumes (read).
 		catalog.ListNamespaces(p),
@@ -108,7 +135,69 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		// Variables (write).
 		variables.WriteVariable(p),
 		variables.DeleteVariable(p),
+
+		// Enterprise only. These are registered like any other tool and then
+		// filtered by CatalogFor when the cluster is known to be Community
+		// Edition; see utils.EnterpriseTool.
+		enterprise.GetLicense(p),
+		enterprise.ListQuotas(p),
+		enterprise.ReadQuota(p),
+		enterprise.CreateQuota(p),
+		enterprise.DeleteQuota(p),
+		enterprise.ListSentinelPolicies(p),
+		enterprise.ReadSentinelPolicy(p),
+		enterprise.WriteSentinelPolicy(p),
+		enterprise.DeleteSentinelPolicy(p),
+		enterprise.ListRecommendations(p),
+		enterprise.ApplyRecommendations(p),
+		enterprise.DismissRecommendations(p),
 	}
+}
+
+// CatalogFor returns the tools to register against a particular cluster.
+//
+// It is Catalog minus the Enterprise-only tools when includeEnterprise is
+// false. Catalog itself always returns everything, so tests can inspect every
+// tool regardless of what any cluster happens to be.
+func CatalogFor(p *client.Provider, includeEnterprise bool) []server.ServerTool {
+	all := Catalog(p)
+	if includeEnterprise {
+		return all
+	}
+
+	out := make([]server.ServerTool, 0, len(all))
+	for _, t := range all {
+		if utils.IsEnterpriseTool(t.Tool) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// includeEnterpriseTools decides whether the Enterprise-only tools are offered.
+//
+// The "auto" policy probes the cluster and hides them only on a positive
+// identification of Community Edition. An unreachable cluster or an
+// inconclusive probe offers them, so a server started before its Nomad — or
+// pointed at a cluster whose token cannot read the version — does not come up
+// silently missing a third of its catalog. A tool that is offered and turns out
+// not to exist still fails legibly, because utils.MapError translates Nomad's
+// 501 into a plain sentence.
+func includeEnterpriseTools(ctx context.Context, p *client.Provider) (bool, string) {
+	cfg := p.Config()
+	switch {
+	case cfg.EnterpriseAlways():
+		return true, "NOMAD_MCP_ENTERPRISE=true"
+	case cfg.EnterpriseNever():
+		return false, "NOMAD_MCP_ENTERPRISE=false"
+	}
+
+	info := p.Edition(ctx)
+	if info.Edition == client.EditionCommunity {
+		return false, "the cluster is Nomad Community Edition (" + info.Reason + ")"
+	}
+	return true, "edition is " + string(info.Edition)
 }
 
 // InitTools registers the tool catalog on the MCP server and returns it.
@@ -123,7 +212,18 @@ func Catalog(p *client.Provider) []server.ServerTool {
 // passing the registered catalog along is what guarantees that rather than
 // merely intending it.
 func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []server.ServerTool {
-	tools := Catalog(p)
+	// The probe needs a context and a bounded wait: registration happens at
+	// startup, and a cluster that is slow or absent must not hold the server
+	// off the transport.
+	ctx, cancel := context.WithTimeout(context.Background(), editionProbeTimeout)
+	defer cancel()
+
+	includeEnterprise, why := includeEnterpriseTools(ctx, p)
+	tools := CatalogFor(p, includeEnterprise)
+
+	p.Logger().WithField("enterprise_tools", includeEnterprise).
+		WithField("reason", why).
+		Debug("decided whether to offer the Enterprise-only tools")
 
 	for _, t := range tools {
 		// Classification is derived from the tool's own MCP read-only
@@ -137,6 +237,7 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []ser
 
 	p.Logger().WithField("tools", len(tools)).
 		WithField("mutating", len(gate.MutatingTools())).
+		WithField("destructive", len(gate.DestructiveTools())).
 		Debug("registered tools")
 
 	return tools

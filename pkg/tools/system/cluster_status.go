@@ -18,18 +18,20 @@ import (
 
 // clusterStatus is the projection returned by get_cluster_status.
 type clusterStatus struct {
-	Leader      string       `json:"leader"`
-	Region      string       `json:"region"`
-	Datacenter  string       `json:"datacenter,omitempty"`
-	Servers     []serverInfo `json:"servers"`
-	ServerCount int          `json:"server_count"`
-	Nodes       nodeSummary  `json:"clients"`
-	Regions     []string     `json:"regions,omitempty"`
-	Versions    []string     `json:"versions,omitempty"`
-	Namespaces  []string     `json:"namespaces,omitempty"`
-	Pools       []string     `json:"node_pools,omitempty"`
-	Degraded    bool         `json:"degraded"`
-	Warnings    []string     `json:"warnings,omitempty"`
+	Leader         string       `json:"leader"`
+	Edition        string       `json:"edition"`
+	Region         string       `json:"region"`
+	Datacenter     string       `json:"datacenter,omitempty"`
+	Servers        []serverInfo `json:"servers"`
+	ServerCount    int          `json:"server_count"`
+	Nodes          nodeSummary  `json:"clients"`
+	Regions        []string     `json:"regions,omitempty"`
+	Versions       []string     `json:"versions,omitempty"`
+	Namespaces     []string     `json:"namespaces,omitempty"`
+	Pools          []string     `json:"node_pools,omitempty"`
+	LicenseExpires string       `json:"license_expires,omitempty"`
+	Degraded       bool         `json:"degraded"`
+	Warnings       []string     `json:"warnings,omitempty"`
 }
 
 type serverInfo struct {
@@ -59,7 +61,8 @@ func GetClusterStatus(p *client.Provider) server.ServerTool {
 			mcp.WithDescription(
 				"Get an overview of the Nomad cluster's health in a single call: who the leader is, "+
 					"which servers are alive, how many client nodes exist and what state they are in, "+
-					"the Nomad versions in use, and the available regions, namespaces and node pools.\n\n"+
+					"the Nomad versions in use, whether it is Community or Enterprise, and the "+
+					"available regions, namespaces and node pools.\n\n"+
 					"Reach for this first when asked anything about the cluster as a whole, when a user reports "+
 					"that \"Nomad is broken\", or before diagnosing why work is not being scheduled. "+
 					"A missing leader, a server that is not alive, or client nodes that are down or draining "+
@@ -107,6 +110,16 @@ func getClusterStatus(ctx context.Context, req mcp.CallToolRequest, p *client.Pr
 		}, p.Redactor()))
 	}
 	status.Leader = leader
+
+	// The edition decides whether the quota, Sentinel, licence and
+	// recommendation tools can work at all, so it belongs in the overview
+	// rather than behind a separate call. The probe is cached and cheap.
+	edition := p.Edition(ctx)
+	status.Edition = string(edition.Edition)
+	if edition.Edition == client.EditionEnterprise && edition.LicenseExpires != "" {
+		status.LicenseExpires = edition.LicenseExpires
+	}
+
 	if leader == "" {
 		status.Degraded = true
 		status.Warnings = append(status.Warnings,
