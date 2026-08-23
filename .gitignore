@@ -70,6 +70,12 @@ data/
 .terraform/
 .terraform.lock.hcl
 
-# Agent tooling
+# Local editor, IDE and tool directories. Nothing here belongs to the project;
+# they are whatever the person working on it happens to have installed.
 /.claude
 /.opencode
+/.cursor
+/.aider*
+/.vscode
+/.idea
+*.swp
