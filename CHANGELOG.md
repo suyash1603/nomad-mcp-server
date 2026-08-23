@@ -3,183 +3,158 @@
 All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
-this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-While the version is `0.x`, minor releases may contain breaking changes to tool
-names, arguments and output shapes.
+While the version is `0.x`, a minor release may change tool names, arguments and
+output shapes.
 
 ## [Unreleased]
 
-## [0.2.0] — 2026-08-23
+## [0.1.0] — 2026-08-23
 
-### Added
+First public release.
 
-**`collect_hcdiag`** — runs HashiCorp's [hcdiag](https://github.com/hashicorp/hcdiag)
-against the cluster and reports the resulting support bundle. It is the only
-tool that executes a local binary rather than calling Nomad's API, so it carries
-its own switch, `NOMAD_MCP_ENABLE_HCDIAG`, which is off by default. The binary
-is named by configuration and never by a tool argument, the command is an argv
-slice with no shell involved, credentials reach the child through the
-environment rather than the command line, and the bundle's contents are never
-returned — only its path and a projection of hcdiag's manifest. See
-`docs/HCDIAG.md`.
+**This is beta software.** Tool names, output shapes and default settings may
+change before 1.0.
 
-**28 new tools — 82 in total, 48 read-only and 34 mutating.**
+### What it is
 
-- *Node pools*: `read_node_pool`, `create_node_pool`, `delete_node_pool`.
-  `read_node_pool` says why nothing targeting a pool will place, rather than
-  leaving the counts for someone to interpret.
-- *Jobs*: `edit_job` — change an image, count, environment variable, CPU or
-  memory reservation on a live job without rewriting its specification. Nomad's
-  only update path is registering a whole job, so the alternative was having the
-  model rebuild the spec from a lossy `read_job` projection and submit that,
-  silently dropping whatever the projection did not carry. `dry_run=true` plans
-  the change first.
-- *Nodes*: `get_node_stats`, `set_node_meta`, `force_evaluate_node`,
-  `restart_node_allocations`, `purge_node`.
-- *Deployments*: `pause_deployment`, `unblock_deployment`,
-  `set_deployment_alloc_health`. `promote_deployment` now accepts `task_groups`
-  to promote named groups instead of all of them.
-- *Scheduler*: `get_scheduler_config`, `set_scheduler_config`. The former names
-  the two settings that stop a cluster scheduling with no error anywhere —
-  `reject_job_registration` and `pause_eval_broker`.
-- *Connection*: `check_connection`, which reports address, TLS, token, ACL
-  state, edition and per-capability permission probes, each failure with a
-  concrete fix rather than a status code.
-- *Enterprise (12, not registered against Community Edition)*: `get_license`,
-  `list_quotas`, `read_quota`, `create_quota`, `delete_quota`,
-  `list_sentinel_policies`, `read_sentinel_policy`, `write_sentinel_policy`,
-  `delete_sentinel_policy`, `list_recommendations`, `apply_recommendations`,
-  `dismiss_recommendations`.
+An MCP server for HashiCorp Nomad. It gives an MCP client — Claude Code, Claude
+Desktop, Cursor, VS Code — a set of tools for inspecting and operating a Nomad
+cluster.
 
-**Edition detection.** The server probes the cluster once at startup, from the
-agent's version string with the licence endpoint as tiebreaker, and drops the
-Enterprise-only tools when it positively identifies Community Edition. An
-unreachable or inconclusive probe offers them, so a server started before its
-Nomad does not come up missing a third of its catalog. `NOMAD_MCP_ENTERPRISE`
-overrides the decision with `auto`, `true` or `false`.
+There are **82 tools**: 48 that only read, and 34 that make changes.
 
-**A destructive-operation tier.** `NOMAD_MCP_ALLOW_DESTRUCTIVE=false` permits
-writes while refusing anything that discards state or interrupts running work.
-It defaults to `true`, so enabling writes still enables all of them, and it
-classifies from the `destructiveHint` annotation the tools already carry rather
-than from a list that could drift.
+### Safe by default
 
-**A third prompt.** `drain_node_safely` orders a node evacuation so the step
-everyone skips — confirming the rest of the cluster can absorb the load, before
-the drain is issued — happens first. A drain with nowhere to reschedule to does
-not fail; it loses the work.
+Four settings decide what the server is allowed to do. All four default to the
+safe option, so a server you start with no configuration can only read.
 
-### Documentation
+| Setting | Default | What it does |
+|---|---|---|
+| `NOMAD_MCP_READ_ONLY` | `true` | Refuses every tool that changes anything |
+| `NOMAD_MCP_ALLOW_DESTRUCTIVE` | `true` | When `false`, allows writes but refuses anything that discards state or interrupts running work |
+| `NOMAD_MCP_ALLOW_VARIABLE_READS` | `false` | Controls reading Nomad Variable *values*, separately from write access |
+| `NOMAD_MCP_ALLOWED_NAMESPACES` | unset | Limits the server to named namespaces, checked before any request is sent |
 
-- `docs/CONNECTING.md` — pointing the server at a cluster running locally, in
-  Docker, on EC2, in Kubernetes or behind TLS, with a symptom-to-cause table.
-- `docs/ENTERPRISE.md` — what differs between the two editions and how the
-  server decides.
-- `docs/HCDIAG.md` — enabling support-bundle collection, what it gathers, how
-  the subprocess is contained, and what to check before sending a bundle on.
+Two more things are true regardless of configuration:
 
-### Notes
+- **There are no ACL tools.** Nothing in this server creates, reads or deletes
+  Nomad ACL tokens or policies.
+- **Task logs, allocation files and job metadata are labelled as untrusted** in
+  the output, because a workload writes them.
 
-- There is no Nomad API that restarts a client agent; the agent is a process
-  under the node's own init system. `restart_node_allocations` does what the
-  request usually means — restart the work on the node, in place — and says so
-  in its own output rather than letting anyone believe otherwise.
-- `purge_node` refuses a node that is still heartbeating. Nomad does not stop
-  you, but the agent re-registers on its next beat, so the purge achieves
-  nothing while the disruption is real.
+The full reasoning is in [docs/SECURITY.md](docs/SECURITY.md).
 
-## [0.1.0] — 2026-08-21
+### Tools
 
-An internal milestone rather than a published release: this was the point the
-server became complete and testable, and it is recorded here because the 0.2.0
-notes build on it. The first tagged release is 0.2.0.
-
-Beta: tool names, output shapes and defaults may change before 1.0.
-
-### Added
-
-**Tools — 54 in total, 37 read-only and 17 mutating.**
-
-- *Cluster*: `get_cluster_status`, `list_regions`, `list_node_pools`,
-  `get_agent_config`, `search`.
-- *Jobs*: `list_jobs`, `read_job`, `read_job_summary`, `list_job_allocations`,
-  `list_job_evaluations`, `list_job_deployments`, `list_job_versions`,
-  `get_job_scale_status`, `plan_job`, `validate_job`, `parse_job_hcl`,
-  `run_job`, `stop_job`, `scale_task_group`, `revert_job_version`,
-  `dispatch_parameterized_job`, `force_periodic_job`.
-- *Allocations*: `list_allocations`, `read_allocation`, `read_allocation_logs`,
-  `list_allocation_files`, `read_allocation_file`, `get_allocation_stats`,
-  `restart_allocation`, `stop_allocation`, `signal_allocation`.
-- *Nodes*: `list_nodes`, `read_node`, `list_node_allocations`,
-  `set_node_eligibility`, `drain_node`.
-- *Scheduler*: `list_deployments`, `read_deployment`, `list_evaluations`,
-  `read_evaluation`, `promote_deployment`, `fail_deployment`.
-- *Catalog*: `list_namespaces`, `read_namespace`, `create_namespace`,
+- **Cluster** — `get_cluster_status`, `list_regions`, `list_node_pools`,
+  `read_node_pool`, `create_node_pool`, `delete_node_pool`, `get_agent_config`,
+  `search`, `check_connection`
+- **Jobs** — `list_jobs`, `read_job`, `read_job_summary`, `edit_job`,
+  `list_job_allocations`, `list_job_evaluations`, `list_job_deployments`,
+  `list_job_versions`, `get_job_scale_status`, `plan_job`, `validate_job`,
+  `parse_job_hcl`, `run_job`, `stop_job`, `scale_task_group`,
+  `revert_job_version`, `dispatch_parameterized_job`, `force_periodic_job`
+- **Allocations** — `list_allocations`, `read_allocation`,
+  `read_allocation_logs`, `list_allocation_files`, `read_allocation_file`,
+  `get_allocation_stats`, `restart_allocation`, `stop_allocation`,
+  `signal_allocation`
+- **Nodes** — `list_nodes`, `read_node`, `list_node_allocations`,
+  `get_node_stats`, `set_node_eligibility`, `set_node_meta`, `drain_node`,
+  `force_evaluate_node`, `restart_node_allocations`, `purge_node`
+- **Deployments and scheduling** — `list_deployments`, `read_deployment`,
+  `list_evaluations`, `read_evaluation`, `promote_deployment`,
+  `pause_deployment`, `unblock_deployment`, `set_deployment_alloc_health`,
+  `fail_deployment`, `get_scheduler_config`, `set_scheduler_config`
+- **Catalog** — `list_namespaces`, `read_namespace`, `create_namespace`,
   `delete_namespace`, `list_services`, `read_service`, `list_volumes`,
-  `read_volume`.
-- *Variables*: `list_variables`, `read_variable`, `write_variable`,
-  `delete_variable`.
+  `read_volume`
+- **Variables** — `list_variables`, `read_variable`, `write_variable`,
+  `delete_variable`
+- **Enterprise (12)** — `get_license`, `list_quotas`, `read_quota`,
+  `create_quota`, `delete_quota`, `list_sentinel_policies`,
+  `read_sentinel_policy`, `write_sentinel_policy`, `delete_sentinel_policy`,
+  `list_recommendations`, `apply_recommendations`, `dismiss_recommendations`
+- **Diagnostics** — `collect_hcdiag`
 
-**Resources.** `nomad://cluster`, `nomad://jobs`,
+Every tool carries an MCP annotation — `readOnlyHint` on reads,
+`destructiveHint` and `idempotentHint` on writes — so a client that asks for
+confirmation has something real to base it on.
+
+### Notable tools
+
+**`edit_job`** changes one thing about a running job: an image, a count, an
+environment variable, a CPU or memory reservation. Nomad's only update path is
+registering the whole job again, so without this the model has to rebuild the
+full specification and resubmit it. Set `dry_run=true` to plan the change first.
+
+**`check_connection`** reports the address, TLS setting, token, ACL state and
+edition, and probes each permission. Every failure comes with a specific fix
+rather than a status code.
+
+**`collect_hcdiag`** collects a HashiCorp
+[hcdiag](https://github.com/hashicorp/hcdiag) support bundle.
+
+- Off by default. Enable it with `NOMAD_MCP_ENABLE_HCDIAG=true`.
+- It is the only tool that runs a program on your machine. Every other tool
+  calls the Nomad API.
+- It returns the bundle's file path, not the bundle's contents.
+- Setup and safety notes: [docs/HCDIAG.md](docs/HCDIAG.md)
+
+### Enterprise detection
+
+The server checks the cluster once at startup and hides the 12 Enterprise-only
+tools when it confirms you are running Community Edition. If the check is
+inconclusive — for example the server started before Nomad did — it offers the
+tools rather than hiding them.
+
+Override the result with `NOMAD_MCP_ENTERPRISE=auto|true|false`. See
+[docs/ENTERPRISE.md](docs/ENTERPRISE.md).
+
+### Resources and prompts
+
+Five resources: `nomad://cluster`, `nomad://jobs`,
 `nomad://jobs/{namespace}/{job_id}`, `nomad://allocs/{alloc_id}` and
-`nomad://nodes/{node_id}`. Each returns exactly what the equivalent tool
-returns, byte for byte.
+`nomad://nodes/{node_id}`. Each returns exactly what the matching tool returns.
 
-**Prompts.** `troubleshoot_failing_job` and `explain_cluster_health`.
+Three prompts: `troubleshoot_failing_job`, `explain_cluster_health` and
+`drain_node_safely`. The last one checks that the rest of the cluster can absorb
+the load *before* the drain is issued — a drain with nowhere to reschedule to
+does not fail, it loses the work.
 
-**Transports.** `stdio` and `streamable-http`, plus a deprecated `http` alias
-matching `vault-mcp-server`.
+### Transports
 
-**Safety.**
-- `NOMAD_MCP_READ_ONLY` defaults to `true`. The gate derives from each tool's
-  MCP `readOnlyHint`, and an unannotated tool is treated as mutating.
-- `NOMAD_MCP_ALLOW_VARIABLE_READS` defaults to `false`, gating Variable values
-  independently of write access.
-- `NOMAD_MCP_ALLOWED_NAMESPACES` confines the server to named namespaces,
-  enforced before any request is made.
-- No ACL tools exist, in any form.
-- Task logs, allocation files and job metadata are labelled as untrusted output.
+`stdio` and `streamable-http`, plus a deprecated `http` alias for consistency
+with `vault-mcp-server`.
 
-**Configuration.** All ten standard `NOMAD_*` variables, plus
-`TRANSPORT_*`/`MCP_*` matching `vault-mcp-server`. Every setting is also a flag,
-and a flag beats the environment. `NOMAD_TOKEN` is deliberately
-environment-only.
+### Configuration
 
-**Error mapping.** Nomad's errors are translated into messages that name the
-fix: a 404 points at the relevant list tool, a 403 names the capability the
-endpoint needed (Nomad's 403 body never does), a connection failure names
-`NOMAD_ADDR`, and a 501 explains that the endpoint requires Nomad Enterprise.
+All ten standard `NOMAD_*` variables are supported, plus `TRANSPORT_*` and
+`MCP_*` matching `vault-mcp-server`. Every setting is also a command-line flag,
+and a flag beats an environment variable.
 
-**Testing.** Unit tests against a fake Nomad built from the real `api` structs;
-end-to-end tests that start a throwaway `nomad agent -dev` and drive the built
-binary as a subprocess; a separate suite for the HTTP transport. 164 unit test
-functions, 16 e2e, 52% statement coverage.
+`NOMAD_TOKEN` is deliberately environment-only — there is no `--nomad-token`
+flag, because command-line arguments are visible in the process list.
 
-### Fixed
+### Error messages
 
-Found during development, listed because each is a class of mistake rather than
-a one-off:
+Nomad's errors are translated into messages that name the fix:
 
-- **Rate limiting no longer applies on the stdio transport.** A normal
-  troubleshooting sequence — a dozen tool calls in a couple of seconds — was
-  being refused partway through, and `MCP_RATE_LIMIT_*` are scoped to the HTTP
-  subcommands, so a throttled stdio user had no flag to raise.
-- **Exit codes no longer vanish from failed tasks.** The projection read
-  `ExitCode` from the last task event, but a task that fails often enough for
-  Nomad to stop restarting it ends on `Not Restarting`, which carries no exit
-  code; `omitempty` then hid the zero.
-- **The query-string credential guard now normalises parameter names.**
-  `url.Values.Get` is case-sensitive, so `nomad_token` passed straight through
-  while `NOMAD_TOKEN` and `token` were both blocked.
-- **`drain_node` is no longer annotated idempotent.** Its `deadline` is relative
-  to when the drain is issued, so re-draining a node pushes its forced eviction
-  out by another full deadline — a client skipping re-confirmation on an
-  "idempotent" retry would move a production node's eviction clock silently.
-- **Resource URI template variables are unwrapped correctly.** mcp-go stores a
-  matched variable as `[]string`, not `string`, so every templated resource read
-  failed as "missing segment" while the URI matching underneath worked.
+- A **403** names the capability your token is missing, and the namespace. Nomad
+  never includes this — its 403 body is only ever `Permission denied`.
+- A **404** points at the tool that lists what does exist.
+- A **connection failure** names the address it tried, and the setting to change.
+- A **501** explains that the endpoint needs Nomad Enterprise.
 
-[Unreleased]: https://github.com/suyash1603/nomad-mcp-server/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/suyash1603/nomad-mcp-server/releases/tag/v0.2.0
-[0.1.0]: https://github.com/suyash1603/nomad-mcp-server/blob/main/CHANGELOG.md#010--2026-08-21
+### Tested
+
+- Unit tests against a fake Nomad built from the real `api` structs.
+- End-to-end tests that start a throwaway `nomad agent -dev` and drive the
+  built binary as a subprocess.
+- A separate suite for the HTTP transport, covering CORS rejection, the health
+  endpoint, and the refusal to bind `0.0.0.0` without TLS.
+- A test per write tool asserting it is refused when `NOMAD_MCP_READ_ONLY=true`.
+
+[Unreleased]: https://github.com/suyash1603/nomad-mcp-server/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/suyash1603/nomad-mcp-server/releases/tag/v0.1.0
