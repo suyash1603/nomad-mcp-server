@@ -3,7 +3,12 @@
 A [Model Context Protocol](https://modelcontextprotocol.io) server for
 [HashiCorp Nomad](https://developer.hashicorp.com/nomad). It gives an AI
 assistant structured, safe access to a Nomad cluster: what is running, what is
-broken, and why.
+broken, why, and — when you let it — how to fix it.
+
+81 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
+volumes and variables. Works against Nomad Community Edition and Enterprise, and
+against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
+API is reachable.
 
 It is built as a sibling of HashiCorp's
 [`vault-mcp-server`](https://github.com/hashicorp/vault-mcp-server) — same
@@ -49,6 +54,10 @@ turn them off:
 | `NOMAD_MCP_ALLOW_VARIABLE_READS=false` | `read_variable` will not return values. `list_variables` still returns paths. |
 | `NOMAD_MCP_ALLOWED_NAMESPACES` unset | Set it to confine the server to specific namespaces. |
 
+A fourth control is available but not on by default:
+`NOMAD_MCP_ALLOW_DESTRUCTIVE=false` permits writes while still refusing anything
+that discards state or interrupts running work.
+
 **The single most effective control is the token.** This server can only do what
 the token you give it can do. Give it a read-only ACL policy scoped to the
 namespaces you actually want visible, not a management token. See
@@ -88,6 +97,17 @@ git clone https://github.com/suyash1603/nomad-mcp-server.git
 cd nomad-mcp-server
 make build          # → ./bin/nomad-mcp-server
 ```
+
+### Connecting to a cluster that is not on this machine
+
+The default address assumes Nomad is local. For a cluster on EC2, in Docker, in
+Kubernetes, or behind TLS, see **[docs/CONNECTING.md](docs/CONNECTING.md)** —
+and when something does not work, ask the model to run `check_connection`, which
+reports exactly which part of the chain is broken and what to do about it.
+
+The one that catches everyone: **inside a container, `localhost` is the
+container.** Use `host.docker.internal` on macOS and Windows, or
+`--network host` on Linux.
 
 ### Check it works
 
@@ -224,7 +244,20 @@ uses, so an environment that already works with `nomad status` works here.
 | `NOMAD_MCP_READ_ONLY` | `--read-only` | **`true`** | Refuse every mutating tool |
 | `NOMAD_MCP_ALLOWED_NAMESPACES` | `--allowed-namespaces` | *(all)* | Comma-separated namespace allowlist |
 | `NOMAD_MCP_ALLOW_VARIABLE_READS` | `--allow-variable-reads` | `false` | Let `read_variable` return values |
+| `NOMAD_MCP_ALLOW_DESTRUCTIVE` | `--allow-destructive` | `true` | Allow tools that discard state or interrupt running work |
 | `NOMAD_MCP_MAX_LOG_BYTES` | `--max-log-bytes` | `65536` | Cap on log and file reads |
+| `NOMAD_MCP_ENTERPRISE` | `--enterprise` | `auto` | Offer the Enterprise-only tools: `auto`, `true` or `false` |
+
+`NOMAD_MCP_ALLOW_DESTRUCTIVE=false` is a middle tier: writes work, but anything
+that can discard state or interrupt running work is refused. `scale_task_group`
+runs; `purge_node`, `delete_namespace` and `drain_node` do not. It defaults to
+`true` so that turning writes on still means turning writes on — read-only is
+already the default, and someone who deliberately disabled it is asking for
+writes.
+
+Both tiers classify from the annotations the tools already carry rather than
+from a separate list, and both fail closed: a tool that forgot its annotation is
+blocked, not quietly permitted.
 
 ### Transport and logging
 
@@ -251,22 +284,37 @@ plaintext, and failing at startup beats a warning nobody reads.
 
 ## Tools
 
-54 tools: **37 read-only** and **17 mutating**. Mutating tools are listed even in
-read-only mode — `tools/list` describes the server honestly, and a blocked call
-returns an explanation rather than an "unknown tool" error that looks like a bug.
+81 tools: **47 read-only** and **34 mutating**. Twelve of them are Enterprise-only
+and are not registered at all against a cluster identified as Community Edition —
+see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
+
+Mutating tools are listed even in read-only mode — `tools/list` describes the
+server honestly, and a blocked call returns an explanation rather than an
+"unknown tool" error that looks like a bug.
 
 Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
-(can discard state or interrupt running work).
+(can discard state or interrupt running work) · **E** requires Nomad Enterprise.
 
-### Cluster and search
+### Cluster, connection and search
 
 | | Tool | What it does |
 |---|---|---|
-| R | `get_cluster_status` | Leader, server peers and versions, node counts by state — the whole cluster in one call |
+| R | `check_connection` | **Start here when anything fails.** Address, TLS, token, ACL state, edition and permission probes — each failure with a concrete fix |
+| R | `get_cluster_status` | Leader, server peers and versions, edition, node counts by state — the whole cluster in one call |
+| R | `get_scheduler_config` | Placement algorithm, preemption, and the two switches that silently stop a cluster scheduling |
 | R | `list_regions` | Regions this cluster knows about |
-| R | `list_node_pools` | Named groups of client nodes that jobs can target |
 | R | `get_agent_config` | Identity and role of the agent this server is connected to (an allowlist, not a raw dump) |
 | R | `search` | Prefix search across jobs, allocations, nodes, deployments, evaluations and more |
+| W! | `set_scheduler_config` | Change scheduler configuration cluster-wide |
+
+### Node pools
+
+| | Tool | What it does |
+|---|---|---|
+| R | `list_node_pools` | Named groups of client nodes that jobs can target |
+| R | `read_node_pool` | One pool: its nodes' states, job count, and **why nothing targeting it will place** |
+| W | `create_node_pool` | Create or update a pool |
+| W! | `delete_node_pool` | Delete a pool permanently |
 
 ### Jobs
 
@@ -283,12 +331,20 @@ Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 | R | `plan_job` | Dry-run a submission: what would be created, destroyed or replaced |
 | R | `validate_job` | Check a jobspec parses and is legal, without submitting |
 | R | `parse_job_hcl` | Convert HCL2 to Nomad's JSON job format |
-| W! | `run_job` | Submit a job, creating or updating it |
+| W! | `edit_job` | **Change one field of a running job** — image, count, env, CPU, memory — without rewriting its spec |
+| W! | `run_job` | Submit a job, creating or replacing it wholesale |
 | W! | `stop_job` | Stop a job, optionally purging it |
 | W! | `scale_task_group` | Change how many allocations a task group runs |
 | W! | `revert_job_version` | Roll a job back to an earlier version |
 | W | `dispatch_parameterized_job` | Dispatch an instance of a parameterized job |
 | W | `force_periodic_job` | Run a periodic job now |
+
+> **Prefer `edit_job` over `run_job` for a job that already exists.** `run_job`
+> replaces the job with whatever spec you submit, so anything the model did not
+> think to include is dropped — and a spec reconstructed from a `read_job`
+> projection always loses something. `edit_job` fetches the live job, changes the
+> named fields, and carries the rest through untouched. `dry_run=true` plans it
+> first.
 
 > `plan_job` and `parse_job_hcl` change nothing, but Nomad requires
 > `submit-job`/`plan-job` and `parse-job` respectively. A token with only
@@ -315,8 +371,23 @@ Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 | R | `list_nodes` | Client nodes: status, pool, class, drain state, healthy drivers |
 | R | `read_node` | One node in detail, with a diagnosis when it cannot take work |
 | R | `list_node_allocations` | Everything running on one node |
+| R | `get_node_stats` | The machine's real CPU, memory and disk use — **a full disk is a common, invisible cause of failure** |
 | W | `set_node_eligibility` | Mark a node eligible or ineligible for new work |
+| W | `set_node_meta` | Set or remove dynamic metadata, which is what job constraints match on |
+| W | `force_evaluate_node` | Nudge the scheduler to reconsider a node |
 | W! | `drain_node` | Drain a node, migrating its allocations away |
+| W! | `restart_node_allocations` | **Restart everything running on a node**, in place |
+| W! | `purge_node` | Remove a node from Nomad's state permanently |
+
+> **There is no "restart a Nomad client" API.** The client agent is a process
+> under the node's own init system, so only something on that machine can
+> restart it. `restart_node_allocations` does what people almost always mean by
+> the request — restart the work on the node, in place, without rescheduling —
+> and says in its own output which of the two it did.
+>
+> `purge_node` refuses to run against a node that is still heartbeating. Purging
+> a live node accomplishes nothing: the agent re-registers on its next beat, so
+> you get the disruption without the cleanup.
 
 ### Deployments and evaluations
 
@@ -326,7 +397,10 @@ Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 | R | `read_deployment` | One rollout, its allocations, and why it is stuck |
 | R | `list_evaluations` | Scheduler evaluations — filter `Status == "blocked"` for capacity problems |
 | R | `read_evaluation` | **Placement failures explained in plain language** |
-| W! | `promote_deployment` | Promote canaries so a rollout can continue |
+| W! | `promote_deployment` | Promote canaries — all groups, or only the ones you name |
+| W! | `pause_deployment` | Pause a rollout in place, or resume a paused one |
+| W! | `unblock_deployment` | Force a health-blocked rollout to count as successful |
+| W! | `set_deployment_alloc_health` | Mark allocations healthy or unhealthy by hand |
 | W! | `fail_deployment` | Mark a deployment failed, stopping the rollout |
 
 ### Namespaces, services and volumes
@@ -350,6 +424,26 @@ Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 | R | `read_variable` | Variable contents. **Off unless `NOMAD_MCP_ALLOW_VARIABLE_READS=true`**; `keys_only=true` works either way |
 | W! | `write_variable` | Create or **replace** a variable (Nomad's endpoint replaces; dropped keys are reported) |
 | W! | `delete_variable` | Delete a variable and its contents |
+
+### Enterprise only
+
+Not registered against a cluster identified as Community Edition. See
+[docs/ENTERPRISE.md](docs/ENTERPRISE.md).
+
+| | Tool | What it does |
+|---|---|---|
+| R E | `get_license` | Modules covered, expiry, non-production status |
+| R E | `list_quotas` | Resource quotas defined in the cluster |
+| R E | `read_quota` | One quota's limits **alongside its usage**, and which namespaces it binds |
+| R E | `list_sentinel_policies` | Admission policies, their scope and enforcement level |
+| R E | `read_sentinel_policy` | One policy, including its source |
+| R E | `list_recommendations` | Dynamic Application Sizing proposals, with the delta and direction |
+| W E | `create_quota` | Create or update a quota |
+| W E | `dismiss_recommendations` | Discard sizing proposals without applying them |
+| W! E | `delete_quota` | Delete a quota — its namespaces become uncapped |
+| W! E | `write_sentinel_policy` | Create or replace a policy. A bad one stops the cluster accepting jobs |
+| W! E | `delete_sentinel_policy` | Delete a policy — whatever it enforced stops being enforced |
+| W! E | `apply_recommendations` | Apply sizing proposals, which resubmits the jobs |
 
 ### Not included: ACL tools
 
@@ -384,6 +478,11 @@ never disagree.
   `job_id` (required), `namespace`, `symptom`.
 - **`explain_cluster_health`** — quorum and version skew first, then nodes,
   blocked scheduling, stuck rollouts and failing jobs. Argument: `namespace`.
+- **`drain_node_safely`** — takes a node out of service in the order that does
+  not lose work: check what is on it, confirm the rest of the cluster can absorb
+  it, mark ineligible, drain, then verify the work actually landed somewhere.
+  Ends differently for a node coming back than for a machine being destroyed.
+  Arguments: `node_id` (required), `reason`, `permanent`.
 
 ---
 
@@ -413,6 +512,8 @@ nomad-mcp-server streamable-http --transport-port 8080
 | Document | For |
 |---|---|
 | [docs/TEAM-TESTING.md](docs/TEAM-TESTING.md) | **Start here** if someone sent you this repo. Under ten minutes. |
+| [docs/CONNECTING.md](docs/CONNECTING.md) | Pointing this at a cluster: local, Docker, EC2, Kubernetes, TLS, tokens |
+| [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Community Edition vs Enterprise, and the twelve tools that need a licence |
 | [docs/TESTING.md](docs/TESTING.md) | The full copy-pasteable test script, every path |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model: token scope, prompt injection, what a compromised client gets |
 | [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) | Narrated tour of the entire codebase |

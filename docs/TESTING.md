@@ -207,7 +207,8 @@ a browser.
 
 2. **Tools** tab → **List Tools**.
 
-   **Expect 54 tools.** Read a few descriptions. Each should say what the tool
+   **Expect 81 tools** against Nomad Enterprise, or 69 against Community Edition —
+   the twelve Enterprise-only tools are not registered where they cannot work. Read a few descriptions. Each should say what the tool
    is for and when to reach for it, not merely restate its name — that is what a
    model actually reads when deciding what to call.
 

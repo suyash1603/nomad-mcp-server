@@ -10,6 +10,71 @@ names, arguments and output shapes.
 
 ## [Unreleased]
 
+### Added
+
+**27 new tools — 81 in total, 47 read-only and 34 mutating.**
+
+- *Node pools*: `read_node_pool`, `create_node_pool`, `delete_node_pool`.
+  `read_node_pool` says why nothing targeting a pool will place, rather than
+  leaving the counts for someone to interpret.
+- *Jobs*: `edit_job` — change an image, count, environment variable, CPU or
+  memory reservation on a live job without rewriting its specification. Nomad's
+  only update path is registering a whole job, so the alternative was having the
+  model rebuild the spec from a lossy `read_job` projection and submit that,
+  silently dropping whatever the projection did not carry. `dry_run=true` plans
+  the change first.
+- *Nodes*: `get_node_stats`, `set_node_meta`, `force_evaluate_node`,
+  `restart_node_allocations`, `purge_node`.
+- *Deployments*: `pause_deployment`, `unblock_deployment`,
+  `set_deployment_alloc_health`. `promote_deployment` now accepts `task_groups`
+  to promote named groups instead of all of them.
+- *Scheduler*: `get_scheduler_config`, `set_scheduler_config`. The former names
+  the two settings that stop a cluster scheduling with no error anywhere —
+  `reject_job_registration` and `pause_eval_broker`.
+- *Connection*: `check_connection`, which reports address, TLS, token, ACL
+  state, edition and per-capability permission probes, each failure with a
+  concrete fix rather than a status code.
+- *Enterprise (12, not registered against Community Edition)*: `get_license`,
+  `list_quotas`, `read_quota`, `create_quota`, `delete_quota`,
+  `list_sentinel_policies`, `read_sentinel_policy`, `write_sentinel_policy`,
+  `delete_sentinel_policy`, `list_recommendations`, `apply_recommendations`,
+  `dismiss_recommendations`.
+
+**Edition detection.** The server probes the cluster once at startup, from the
+agent's version string with the licence endpoint as tiebreaker, and drops the
+Enterprise-only tools when it positively identifies Community Edition. An
+unreachable or inconclusive probe offers them, so a server started before its
+Nomad does not come up missing a third of its catalog. `NOMAD_MCP_ENTERPRISE`
+overrides the decision with `auto`, `true` or `false`.
+
+**A destructive-operation tier.** `NOMAD_MCP_ALLOW_DESTRUCTIVE=false` permits
+writes while refusing anything that discards state or interrupts running work.
+It defaults to `true`, so enabling writes still enables all of them, and it
+classifies from the `destructiveHint` annotation the tools already carry rather
+than from a list that could drift.
+
+**A third prompt.** `drain_node_safely` orders a node evacuation so the step
+everyone skips — confirming the rest of the cluster can absorb the load, before
+the drain is issued — happens first. A drain with nowhere to reschedule to does
+not fail; it loses the work.
+
+### Documentation
+
+- `docs/CONNECTING.md` — pointing the server at a cluster running locally, in
+  Docker, on EC2, in Kubernetes or behind TLS, with a symptom-to-cause table.
+- `docs/ENTERPRISE.md` — what differs between the two editions and how the
+  server decides.
+
+### Notes
+
+- There is no Nomad API that restarts a client agent; the agent is a process
+  under the node's own init system. `restart_node_allocations` does what the
+  request usually means — restart the work on the node, in place — and says so
+  in its own output rather than letting anyone believe otherwise.
+- `purge_node` refuses a node that is still heartbeating. Nomad does not stop
+  you, but the agent re-registers on its next beat, so the purge achieves
+  nothing while the disruption is real.
+
 ## [0.1.0] — 2026-08-21
 
 First release. Beta: tool names, output shapes and defaults may change before

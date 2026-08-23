@@ -153,7 +153,26 @@ The refusal names the tool, gives both the environment variable and the flag
 that would change it, and says **do not retry** — without that last part a model
 will burn two or three more turns on the same call.
 
-There is a test for every one of the 17 mutating tools individually.
+There is a test for every one of the 34 mutating tools individually.
+
+### The destructive tier
+
+`NOMAD_MCP_ALLOW_DESTRUCTIVE=false` is a second, narrower gate that applies once
+writes are enabled. A tool may then change the cluster but not discard state or
+interrupt running work: `scale_task_group` and `create_namespace` run,
+`purge_node`, `delete_namespace`, `drain_node` and `run_job` do not.
+
+It defaults to `true`. Read-only is already the default, so someone who
+deliberately turned writes on is asking for writes, and a second gate they did
+not know about would present as a broken tool rather than as a safeguard. The
+tier is there for the case where an operator genuinely wants the middle ground —
+an agent that can scale and annotate but cannot destroy.
+
+Like the read-only gate, it classifies from the annotation each tool already
+carries rather than from a separate list, and it fails closed: a mutating tool
+with no `destructiveHint` is treated as destructive. Its refusal names a
+non-destructive alternative where one exists, because a model that is simply
+told no will otherwise go looking for a way around.
 
 ### Destructive-operation hints
 
