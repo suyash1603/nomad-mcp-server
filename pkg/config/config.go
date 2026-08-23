@@ -61,6 +61,8 @@ const (
 	EnvAllowedNamespaces  = "NOMAD_MCP_ALLOWED_NAMESPACES"
 	EnvAllowVariableReads = "NOMAD_MCP_ALLOW_VARIABLE_READS"
 	EnvMaxLogBytes        = "NOMAD_MCP_MAX_LOG_BYTES"
+	EnvAllowDestructive   = "NOMAD_MCP_ALLOW_DESTRUCTIVE"
+	EnvEnterprise         = "NOMAD_MCP_ENTERPRISE"
 	EnvLogFile            = "NOMAD_MCP_LOG_FILE"
 	EnvLogLevel           = "NOMAD_MCP_LOG_LEVEL"
 )
@@ -85,6 +87,21 @@ const (
 	// DefaultMaxLogBytes caps log and file reads so a chatty task cannot
 	// exhaust the model's context window.
 	DefaultMaxLogBytes = 65536
+
+	// DefaultAllowDestructive is true, which means turning writes on turns all
+	// of them on. The alternative — a second flag to unlock node purges and
+	// namespace deletions — was rejected as the default because writes are
+	// already off unless the operator deliberately enabled them, and a second
+	// gate they did not know about would look like a broken tool. Operators who
+	// do want the middle tier set it to false.
+	DefaultAllowDestructive = true
+
+	// DefaultEnterprise is "auto": probe the cluster once at startup and offer
+	// the Enterprise-only tools unless the cluster is known to be Community
+	// Edition. Probing is best-effort, and an unreachable cluster resolves to
+	// offering them, so a server started before its Nomad does not come up
+	// missing half its catalog.
+	DefaultEnterprise = "auto"
 )
 
 // scope says which command a setting's flag is registered on.
@@ -154,6 +171,10 @@ var settings = []setting{
 		"Allow read_variable to return Nomad Variable values. Variables hold secrets"},
 	{"max-log-bytes", EnvMaxLogBytes, kindInt, DefaultMaxLogBytes, scopeRoot,
 		"Maximum bytes returned by log and allocation file reads before truncation"},
+	{"allow-destructive", EnvAllowDestructive, kindBool, DefaultAllowDestructive, scopeRoot,
+		"Allow tools that discard state or interrupt running work. Set false for a writes-but-nothing-irreversible tier"},
+	{"enterprise", EnvEnterprise, kindString, DefaultEnterprise, scopeRoot,
+		"Offer the Nomad Enterprise-only tools: auto (probe the cluster), true (always), or false (never)"},
 
 	// --- Logging ----------------------------------------------------------
 	{"log-file", EnvLogFile, kindString, "", scopeRoot,
@@ -203,6 +224,8 @@ type Config struct {
 	AllowedNamespaces  []string
 	AllowVariableReads bool
 	MaxLogBytes        int64
+	AllowDestructive   bool
+	Enterprise         string
 
 	// Logging.
 	LogFile  string
@@ -307,6 +330,8 @@ func Load() (*Config, error) {
 		AllowedNamespaces:  splitList(viper.GetString("allowed-namespaces")),
 		AllowVariableReads: viper.GetBool("allow-variable-reads"),
 		MaxLogBytes:        int64(viper.GetInt("max-log-bytes")),
+		AllowDestructive:   viper.GetBool("allow-destructive"),
+		Enterprise:         strings.ToLower(strings.TrimSpace(viper.GetString("enterprise"))),
 
 		LogFile:  viper.GetString("log-file"),
 		LogLevel: viper.GetString("log-level"),
@@ -325,6 +350,9 @@ func Load() (*Config, error) {
 
 	if c.NomadNamespace == "" {
 		c.NomadNamespace = DefaultNomadNamespace
+	}
+	if c.Enterprise == "" {
+		c.Enterprise = DefaultEnterprise
 	}
 
 	// Parity with vault-mcp-server: setting any of the HTTP transport
@@ -364,6 +392,13 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("invalid %s %q: must be one of trace, debug, info, warn, error",
 			EnvLogLevel, c.LogLevel)
+	}
+
+	switch c.Enterprise {
+	case "auto", "true", "false":
+	default:
+		return fmt.Errorf("invalid %s %q: must be auto, true, or false",
+			EnvEnterprise, c.Enterprise)
 	}
 
 	if c.MaxLogBytes <= 0 {
@@ -459,3 +494,15 @@ func splitList(s string) []string {
 	}
 	return out
 }
+
+// EnterpriseAlways reports whether the Enterprise-only tools are offered
+// unconditionally, without probing the cluster.
+func (c *Config) EnterpriseAlways() bool { return c.Enterprise == "true" }
+
+// EnterpriseNever reports whether the Enterprise-only tools are suppressed
+// unconditionally. Useful on a Community Edition cluster whose operator would
+// rather the model never saw a tool it cannot use.
+func (c *Config) EnterpriseNever() bool { return c.Enterprise == "false" }
+
+// EnterpriseAuto reports whether the decision is left to a cluster probe.
+func (c *Config) EnterpriseAuto() bool { return c.Enterprise == "auto" || c.Enterprise == "" }

@@ -99,7 +99,7 @@ func testServer(t *testing.T, cfg *config.Config) (*server.MCPServer, *Registrar
 	s := server.NewMCPServer("test", "test",
 		server.WithResourceCapabilities(true, true))
 
-	gate := client.NewGate(cfg.ReadOnly, logger)
+	gate := client.NewGate(cfg.ReadOnly, cfg.AllowDestructive, logger)
 	catalog := tools.InitTools(s, p, gate)
 
 	r := New(p, catalog)
@@ -367,7 +367,7 @@ func TestNoResourceCanChangeTheCluster(t *testing.T) {
 	require.NoError(t, err)
 
 	s := server.NewMCPServer("test", "test", server.WithResourceCapabilities(true, true))
-	gate := client.NewGate(true, logger)
+	gate := client.NewGate(true, true, logger)
 	catalog := tools.InitTools(s, p, gate)
 
 	r := New(p, catalog)

@@ -79,3 +79,43 @@ func StringPtr(s string) *string { return &s }
 
 // IntPtr returns a pointer to i.
 func IntPtr(i int) *int { return &i }
+
+// metaKeyEnterprise is the _meta field marking a tool as Enterprise-only.
+//
+// The marker rides on the tool itself for the same reason the read-only
+// classification does: a separate list of Enterprise tool names would be one
+// more thing to forget to update, and forgetting it here means either hiding a
+// tool that works or advertising one that cannot.
+const metaKeyEnterprise = "io.github.suyash1603.nomad-mcp/enterprise"
+
+// EnterpriseTool marks a tool as calling an endpoint that exists only in Nomad
+// Enterprise, and prepends that fact to its description.
+//
+// Apply it after the description option, which it edits in place. Community
+// Edition answers these endpoints with HTTP 501, which utils.MapError already
+// translates — this marker is what lets the server go one better and not offer
+// the tool at all against a cluster known to be Community Edition.
+func EnterpriseTool() mcp.ToolOption {
+	return func(t *mcp.Tool) {
+		if t.Meta == nil {
+			t.Meta = &mcp.Meta{}
+		}
+		if t.Meta.AdditionalFields == nil {
+			t.Meta.AdditionalFields = map[string]any{}
+		}
+		t.Meta.AdditionalFields[metaKeyEnterprise] = true
+
+		t.Description = "REQUIRES NOMAD ENTERPRISE. This endpoint does not exist in Nomad " +
+			"Community Edition and will be refused there; get_cluster_status reports which " +
+			"edition this cluster runs.\n\n" + t.Description
+	}
+}
+
+// IsEnterpriseTool reports whether a tool was marked with EnterpriseTool.
+func IsEnterpriseTool(t mcp.Tool) bool {
+	if t.Meta == nil || t.Meta.AdditionalFields == nil {
+		return false
+	}
+	v, ok := t.Meta.AdditionalFields[metaKeyEnterprise].(bool)
+	return ok && v
+}

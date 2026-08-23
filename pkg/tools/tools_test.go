@@ -45,7 +45,7 @@ func gateFor(t *testing.T, p *client.Provider, readOnly bool) *client.Gate {
 	logger := log.New()
 	logger.SetOutput(io.Discard)
 
-	gate := client.NewGate(readOnly, logger)
+	gate := client.NewGate(readOnly, true, logger)
 	for _, tool := range Catalog(p) {
 		gate.Classify(tool.Tool)
 	}

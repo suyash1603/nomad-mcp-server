@@ -153,7 +153,7 @@ func NewServer(cfg *config.Config, logger *log.Logger, opts ...server.ServerOpti
 		return nil, err
 	}
 
-	gate := client.NewGate(cfg.ReadOnly, logger)
+	gate := client.NewGate(cfg.ReadOnly, cfg.AllowDestructive, logger)
 
 	hooks := &server.Hooks{}
 	provider.RegisterHooks(hooks)

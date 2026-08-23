@@ -56,7 +56,7 @@ func call(t *testing.T, g *Gate, toolName string) (result *mcp.CallToolResult, r
 }
 
 func TestGateClassifiesFromAnnotations(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 
 	require.False(t, g.Classify(readTool("list_jobs")), "a read-only tool must not be mutating")
 	require.True(t, g.Classify(writeTool("stop_job")), "a destructive tool must be mutating")
@@ -68,7 +68,7 @@ func TestGateClassifiesFromAnnotations(t *testing.T) {
 // TestUnannotatedToolIsTreatedAsMutating is the fail-closed property: a tool
 // whose author forgot the annotation must be blocked, not silently allowed.
 func TestUnannotatedToolIsTreatedAsMutating(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 
 	forgot := mcp.NewTool("forgot_annotation", mcp.WithDescription("oops"))
 	require.True(t, g.Classify(forgot), "an unannotated tool must default to mutating")
@@ -79,7 +79,7 @@ func TestUnannotatedToolIsTreatedAsMutating(t *testing.T) {
 
 // TestUnknownToolIsTreatedAsMutating covers a name the gate has never seen.
 func TestUnknownToolIsTreatedAsMutating(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 	require.True(t, g.IsMutating("never_registered"))
 
 	_, reached := call(t, g, "never_registered")
@@ -88,7 +88,7 @@ func TestUnknownToolIsTreatedAsMutating(t *testing.T) {
 
 // TestReadOnlyRefusesMutatingTools is the headline guarantee of the project.
 func TestReadOnlyRefusesMutatingTools(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 	g.Classify(writeTool("stop_job"))
 
 	res, reached := call(t, g, "stop_job")
@@ -106,7 +106,7 @@ func TestReadOnlyRefusesMutatingTools(t *testing.T) {
 // TestRefusalTellsTheModelNotToRetry: without this, a model will typically
 // retry the call or hunt for another tool that achieves the same effect.
 func TestRefusalTellsTheModelNotToRetry(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 	g.Classify(writeTool("stop_job"))
 
 	res, _ := call(t, g, "stop_job")
@@ -114,7 +114,7 @@ func TestRefusalTellsTheModelNotToRetry(t *testing.T) {
 }
 
 func TestReadOnlyAllowsReadTools(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 	g.Classify(readTool("list_jobs"))
 
 	res, reached := call(t, g, "list_jobs")
@@ -123,7 +123,7 @@ func TestReadOnlyAllowsReadTools(t *testing.T) {
 }
 
 func TestWritesEnabledAllowsEverything(t *testing.T) {
-	g := NewGate(false, quietLogger())
+	g := NewGate(false, true, quietLogger())
 	g.Classify(writeTool("stop_job"))
 	g.Classify(readTool("list_jobs"))
 
@@ -134,7 +134,7 @@ func TestWritesEnabledAllowsEverything(t *testing.T) {
 }
 
 func TestMutatingToolsListing(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 	g.Classify(writeTool("stop_job"))
 	g.Classify(writeTool("drain_node"))
 	g.Classify(readTool("list_jobs"))
@@ -144,14 +144,14 @@ func TestMutatingToolsListing(t *testing.T) {
 }
 
 func TestGateReadOnlyAccessor(t *testing.T) {
-	require.True(t, NewGate(true, quietLogger()).ReadOnly())
-	require.False(t, NewGate(false, quietLogger()).ReadOnly())
+	require.True(t, NewGate(true, true, quietLogger()).ReadOnly())
+	require.False(t, NewGate(false, true, quietLogger()).ReadOnly())
 }
 
 // TestGateIsConcurrencySafe: in HTTP mode many sessions call tools at once
 // while classification may still be running.
 func TestGateIsConcurrencySafe(t *testing.T) {
-	g := NewGate(true, quietLogger())
+	g := NewGate(true, true, quietLogger())
 
 	done := make(chan struct{})
 	go func() {
@@ -177,4 +177,4 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 }
 
 // compile-time check that the gate middleware matches mcp-go's expected type.
-var _ server.ToolHandlerMiddleware = NewGate(true, quietLogger()).Middleware()
+var _ server.ToolHandlerMiddleware = NewGate(true, true, quietLogger()).Middleware()

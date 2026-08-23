@@ -63,6 +63,11 @@ type Provider struct {
 
 	sessions sync.Map // sessionID -> *sessionEntry
 
+	// edition caches what build of Nomad the cluster runs, so that the dozen
+	// Enterprise-only tools can explain themselves without every one of them
+	// re-probing.
+	edition editionCache
+
 	// fallback serves calls that arrive without an MCP session, which happens
 	// in tests and in direct library use.
 	fallback *api.Client
