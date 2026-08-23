@@ -10,6 +10,8 @@ names, arguments and output shapes.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-23
+
 ### Added
 
 **`collect_hcdiag`** — runs HashiCorp's [hcdiag](https://github.com/hashicorp/hcdiag)
@@ -89,8 +91,11 @@ not fail; it loses the work.
 
 ## [0.1.0] — 2026-08-21
 
-First release. Beta: tool names, output shapes and defaults may change before
-1.0.
+An internal milestone rather than a published release: this was the point the
+server became complete and testable, and it is recorded here because the 0.2.0
+notes build on it. The first tagged release is 0.2.0.
+
+Beta: tool names, output shapes and defaults may change before 1.0.
 
 ### Added
 
@@ -175,5 +180,6 @@ a one-off:
   matched variable as `[]string`, not `string`, so every templated resource read
   failed as "missing segment" while the URI matching underneath worked.
 
-[Unreleased]: https://github.com/suyash1603/nomad-mcp-server/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/suyash1603/nomad-mcp-server/releases/tag/v0.1.0
+[Unreleased]: https://github.com/suyash1603/nomad-mcp-server/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/suyash1603/nomad-mcp-server/releases/tag/v0.2.0
+[0.1.0]: https://github.com/suyash1603/nomad-mcp-server/blob/main/CHANGELOG.md#010--2026-08-21
