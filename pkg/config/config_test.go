@@ -89,7 +89,8 @@ func TestEnvIsHonored(t *testing.T) {
 	require.Equal(t, int64(1024), cfg.MaxLogBytes)
 }
 
-// TestFlagBeatsEnv asserts that a flag beats an environment variable.
+// TestFlagBeatsEnv pins the precedence rule the whole config layer rests on:
+// flag beats environment variable beats default.
 func TestFlagBeatsEnv(t *testing.T) {
 	t.Setenv(EnvNomadAddr, "http://from-env:4646")
 	t.Setenv(EnvNomadNamespace, "from-env")

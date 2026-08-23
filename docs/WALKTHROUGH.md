@@ -59,7 +59,7 @@ This mirrors `hashicorp/vault-mcp-server` deliberately — same layout, same
 libraries, same flag names — so a HashiCorp maintainer reading it recognises
 everything. `pkg/config/` is the one addition; upstream reads `os.Getenv` inline
 at each use site, which does not satisfy the "flag beats env, for every setting"
-precedence rule.
+requirement that a flag beats an environment variable.
 
 ---
 
@@ -179,7 +179,7 @@ Three commands, mirroring upstream exactly:
 | `streamable-http` | HTTP transport |
 | `http` | deprecated alias for `streamable-http` |
 
-A command called `http` would be the obvious name. Upstream actually named it
+The command was originally specified as `http`. Upstream actually named it
 `streamable-http` and kept `http` working as a deprecated alias, so that is what
 this does — parity beats the spec's shorthand, and nobody's config breaks.
 

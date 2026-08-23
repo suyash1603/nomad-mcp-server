@@ -79,7 +79,7 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 	return tc.Text
 }
 
-// expectedMutatingTools is the write catalog.
+// expectedMutatingTools is the write catalog, written out by hand.
 //
 // This is written out by hand on purpose. Everything else in the codebase
 // derives the mutating set from annotations, which is right for the runtime but
