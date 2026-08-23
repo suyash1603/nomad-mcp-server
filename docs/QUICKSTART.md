@@ -106,9 +106,39 @@ restart the app:
 }
 ```
 
-### Cursor or VS Code
+### Cursor
 
-See the [README](../README.md#configure-your-mcp-client) — same shape.
+`.cursor/mcp.json` in the project, or `~/.cursor/mcp.json` globally:
+
+```json
+{
+  "mcpServers": {
+    "nomad": {
+      "command": "/absolute/path/to/nomad-mcp-server/bin/nomad-mcp-server",
+      "args": ["stdio"],
+      "env": { "NOMAD_ADDR": "http://127.0.0.1:4646" }
+    }
+  }
+}
+```
+
+### VS Code
+
+`.vscode/mcp.json`. Note the key is `servers`, not `mcpServers`, and each entry
+names its `type`:
+
+```json
+{
+  "servers": {
+    "nomad": {
+      "type": "stdio",
+      "command": "/absolute/path/to/nomad-mcp-server/bin/nomad-mcp-server",
+      "args": ["stdio"],
+      "env": { "NOMAD_ADDR": "http://127.0.0.1:4646" }
+    }
+  }
+}
+```
 
 ---
 
@@ -150,9 +180,16 @@ nomad job status hello-service | head -3
 
 **5. Try a prompt or a resource.**
 
-In Claude Code: `/nomad:troubleshoot_failing_job` with `job_id=unplaceable`, or
-attach `@nomad://jobs/default/hello-service`. In Claude Desktop, both are in the
-`+` menu.
+Run `troubleshoot_failing_job` with `job_id=unplaceable`, or attach
+`nomad://jobs/default/hello-service` as a resource. How you reach them depends
+on the client:
+
+| Client | Prompts | Resources |
+|---|---|---|
+| Claude Code | `/nomad:troubleshoot_failing_job` | `@nomad://jobs/default/hello-service` |
+| Claude Desktop | the `+` menu | the paperclip menu |
+| Cursor | the prompt picker | attach from the MCP panel |
+| VS Code | `/mcp.nomad.troubleshoot_failing_job` | the `#` picker |
 
 ---
 

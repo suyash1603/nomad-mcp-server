@@ -328,7 +328,12 @@ EOF
 
 ---
 
-## 7. Claude Code
+## 7. In an MCP client
+
+Wire the built binary into whichever client you use. The checks below are the
+same in all of them.
+
+### Claude Code
 
 ```bash
 claude mcp add nomad \
@@ -338,8 +343,71 @@ claude mcp add nomad \
 claude mcp list
 ```
 
-**Expect** `nomad` listed and connected. Then start `claude` and try these, in
-this order — they walk the same path the troubleshooting prompt does:
+**Expect** `nomad` listed and connected.
+
+### Claude Desktop
+
+`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS,
+`%APPDATA%\Claude\claude_desktop_config.json` on Windows. Restart the app after
+editing:
+
+```json
+{
+  "mcpServers": {
+    "nomad": {
+      "command": "/absolute/path/to/bin/nomad-mcp-server",
+      "args": ["stdio"],
+      "env": { "NOMAD_ADDR": "http://127.0.0.1:4646" }
+    }
+  }
+}
+```
+
+**Expect** a hammer icon in the input box listing the tools.
+
+### Cursor
+
+`.cursor/mcp.json` in the project, or `~/.cursor/mcp.json` globally:
+
+```json
+{
+  "mcpServers": {
+    "nomad": {
+      "command": "/absolute/path/to/bin/nomad-mcp-server",
+      "args": ["stdio"],
+      "env": { "NOMAD_ADDR": "http://127.0.0.1:4646" }
+    }
+  }
+}
+```
+
+**Expect** `nomad` green under Settings → MCP.
+
+### VS Code
+
+`.vscode/mcp.json`. The key is `servers`, not `mcpServers`, and each entry names
+its `type`:
+
+```json
+{
+  "servers": {
+    "nomad": {
+      "type": "stdio",
+      "command": "/absolute/path/to/bin/nomad-mcp-server",
+      "args": ["stdio"],
+      "env": { "NOMAD_ADDR": "http://127.0.0.1:4646" }
+    }
+  }
+}
+```
+
+**Expect** a Start action on the server block, and the tools listed in Copilot
+Chat's tool picker once it is running.
+
+### The checks
+
+Ask these in order, in whichever client you wired up — they walk the same path
+the troubleshooting prompt does:
 
 | Ask | What should happen |
 |---|---|
@@ -352,15 +420,17 @@ this order — they walk the same path the troubleshooting prompt does:
 If the second one goes looking for logs instead of evaluations, that is worth
 reporting — the whole design assumes it will not.
 
-Try the prompt directly too: `/nomad:troubleshoot_failing_job` with
-`job_id=unplaceable`, or attach `@nomad://jobs/default/hello-service` as a
-resource.
+Try the prompts and resources too. How you reach them differs by client:
 
-Remove it again when you are done:
+| Client | Prompts | Resources |
+|---|---|---|
+| Claude Code | `/nomad:troubleshoot_failing_job` | `@nomad://jobs/default/hello-service` |
+| Claude Desktop | the `+` menu | the paperclip menu |
+| Cursor | the prompt picker | attach from the MCP panel |
+| VS Code | `/mcp.nomad.troubleshoot_failing_job` | `#` attachment picker |
 
-```bash
-claude mcp remove nomad
-```
+Remove it again when you are done — `claude mcp remove nomad` for Claude Code,
+or delete the entry from the JSON file for the others.
 
 ---
 

@@ -499,8 +499,9 @@ capability is not to build it.
 
 ## Resources and prompts
 
-**Resources** let you attach a Nomad object to a conversation directly — the
-paperclip menu in Claude Desktop, `@`-mentions in Claude Code:
+**Resources** let you attach a Nomad object to a conversation directly —
+`@`-mentions in Claude Code, the paperclip menu in Claude Desktop, the MCP panel
+in Cursor, the `#` picker in VS Code:
 
 | URI | Contents |
 |---|---|
