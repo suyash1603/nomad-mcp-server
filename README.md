@@ -5,8 +5,8 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 assistant structured, safe access to a Nomad cluster: what is running, what is
 broken, why, and — when you let it — how to fix it.
 
-81 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
-volumes and variables. Works against Nomad Community Edition and Enterprise, and
+82 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
+volumes and variables, plus hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
 against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
 API is reachable.
 
@@ -248,6 +248,20 @@ uses, so an environment that already works with `nomad status` works here.
 | `NOMAD_MCP_MAX_LOG_BYTES` | `--max-log-bytes` | `65536` | Cap on log and file reads |
 | `NOMAD_MCP_ENTERPRISE` | `--enterprise` | `auto` | Offer the Enterprise-only tools: `auto`, `true` or `false` |
 
+### Support bundles
+
+| Environment variable | Flag | Default | Description |
+|---|---|---|---|
+| `NOMAD_MCP_ENABLE_HCDIAG` | `--enable-hcdiag` | **`false`** | Allow `collect_hcdiag` to run the local `hcdiag` binary |
+| `NOMAD_MCP_HCDIAG_PATH` | `--hcdiag-path` | `hcdiag` | Path to the binary, or a name to find on `PATH` |
+| `NOMAD_MCP_HCDIAG_DEST` | `--hcdiag-dest` | temp dir | Directory bundles must be written under |
+| `NOMAD_MCP_HCDIAG_TIMEOUT` | `--hcdiag-timeout` | `10m` | Maximum time one collection may run |
+
+The binary is named by configuration and never by a tool argument — a model that
+could choose the executable could run anything the server can. Setting
+`NOMAD_MCP_HCDIAG_DEST` confines where bundles may be written; a `destination`
+outside it is refused.
+
 `NOMAD_MCP_ALLOW_DESTRUCTIVE=false` is a middle tier: writes work, but anything
 that can discard state or interrupt running work is refused. `scale_task_group`
 runs; `purge_node`, `delete_namespace` and `drain_node` do not. It defaults to
@@ -284,7 +298,7 @@ plaintext, and failing at startup beats a warning nobody reads.
 
 ## Tools
 
-81 tools: **47 read-only** and **34 mutating**. Twelve of them are Enterprise-only
+82 tools: **48 read-only** and **34 mutating**. Twelve of them are Enterprise-only
 and are not registered at all against a cluster identified as Community Edition —
 see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
 
@@ -306,6 +320,35 @@ Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 | R | `get_agent_config` | Identity and role of the agent this server is connected to (an allowlist, not a raw dump) |
 | R | `search` | Prefix search across jobs, allocations, nodes, deployments, evaluations and more |
 | W! | `set_scheduler_config` | Change scheduler configuration cluster-wide |
+
+### Support bundles
+
+| | Tool | What it does |
+|---|---|---|
+| R | `collect_hcdiag` | Run [hcdiag](https://github.com/hashicorp/hcdiag) and produce a Nomad support bundle |
+
+`collect_hcdiag` is the only tool that runs a program on the host rather than
+calling Nomad's API, so it has its own switch and is **off by default**:
+
+```bash
+NOMAD_MCP_ENABLE_HCDIAG=true
+```
+
+It also needs `hcdiag` installed on the machine running this MCP server — not on
+the Nomad servers — because that is where the process executes it.
+
+It returns the bundle's **path and a summary of what was collected, never the
+contents**. hcdiag gathers agent configuration, environment variables and logs,
+which on a real cluster means credentials; the tool tells the model not to read
+the bundle and to hand the path to you instead. hcdiag applies its own
+redactions, but treat them as a safety net rather than a guarantee before
+sending a bundle anywhere.
+
+Start with `dry_run=true` to see what would be gathered. The default 72-hour
+window is what makes a real run slow — narrow it with `since` when the problem
+is recent.
+
+See [docs/HCDIAG.md](docs/HCDIAG.md).
 
 ### Node pools
 
@@ -514,6 +557,7 @@ nomad-mcp-server streamable-http --transport-port 8080
 | [docs/TEAM-TESTING.md](docs/TEAM-TESTING.md) | **Start here** if someone sent you this repo. Under ten minutes. |
 | [docs/CONNECTING.md](docs/CONNECTING.md) | Pointing this at a cluster: local, Docker, EC2, Kubernetes, TLS, tokens |
 | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Community Edition vs Enterprise, and the twelve tools that need a licence |
+| [docs/HCDIAG.md](docs/HCDIAG.md) | Support-bundle collection: enabling it, what it gathers, and handling the result |
 | [docs/TESTING.md](docs/TESTING.md) | The full copy-pasteable test script, every path |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model: token scope, prompt injection, what a compromised client gets |
 | [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) | Narrated tour of the entire codebase |

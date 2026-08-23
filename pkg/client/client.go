@@ -282,3 +282,40 @@ func WithNamespace(ctx context.Context, ns string) context.Context {
 func WithRegion(ctx context.Context, region string) context.Context {
 	return context.WithValue(ctx, ctxKeyRegion, region)
 }
+
+// NomadEnv returns the NOMAD_* environment variables a child process needs to
+// talk to the same cluster, with the same credentials, as this session.
+//
+// It exists so that the token never has to leave this package as a bare string.
+// The one tool that shells out — collect_hcdiag — needs hcdiag to reach Nomad,
+// and hcdiag reads the standard NOMAD_* variables, so handing it an environment
+// is both the natural interface and the safe one: values passed this way are
+// not visible in `ps`, which is exactly why NOMAD_TOKEN has no command-line
+// flag on this server either.
+//
+// Only variables that are actually set are returned, so a child inherits
+// nothing this server was not itself configured with.
+func (p *Provider) NomadEnv(ctx context.Context) []string {
+	pairs := []struct{ key, value string }{
+		{"NOMAD_ADDR", p.cfg.NomadAddr},
+		{"NOMAD_TOKEN", p.resolveToken(ctx)},
+		{"NOMAD_REGION", p.cfg.NomadRegion},
+		{"NOMAD_NAMESPACE", p.cfg.NomadNamespace},
+		{"NOMAD_CACERT", p.cfg.NomadCACert},
+		{"NOMAD_CAPATH", p.cfg.NomadCAPath},
+		{"NOMAD_CLIENT_CERT", p.cfg.NomadClientCert},
+		{"NOMAD_CLIENT_KEY", p.cfg.NomadClientKey},
+		{"NOMAD_TLS_SERVER_NAME", p.cfg.NomadTLSServerName},
+	}
+
+	env := make([]string, 0, len(pairs)+1)
+	for _, pair := range pairs {
+		if pair.value != "" {
+			env = append(env, pair.key+"="+pair.value)
+		}
+	}
+	if p.cfg.NomadSkipVerify {
+		env = append(env, "NOMAD_SKIP_VERIFY=true")
+	}
+	return env
+}

@@ -12,7 +12,17 @@ names, arguments and output shapes.
 
 ### Added
 
-**27 new tools — 81 in total, 47 read-only and 34 mutating.**
+**`collect_hcdiag`** — runs HashiCorp's [hcdiag](https://github.com/hashicorp/hcdiag)
+against the cluster and reports the resulting support bundle. It is the only
+tool that executes a local binary rather than calling Nomad's API, so it carries
+its own switch, `NOMAD_MCP_ENABLE_HCDIAG`, which is off by default. The binary
+is named by configuration and never by a tool argument, the command is an argv
+slice with no shell involved, credentials reach the child through the
+environment rather than the command line, and the bundle's contents are never
+returned — only its path and a projection of hcdiag's manifest. See
+`docs/HCDIAG.md`.
+
+**28 new tools — 82 in total, 48 read-only and 34 mutating.**
 
 - *Node pools*: `read_node_pool`, `create_node_pool`, `delete_node_pool`.
   `read_node_pool` says why nothing targeting a pool will place, rather than
@@ -64,6 +74,8 @@ not fail; it loses the work.
   Docker, on EC2, in Kubernetes or behind TLS, with a symptom-to-cause table.
 - `docs/ENTERPRISE.md` — what differs between the two editions and how the
   server decides.
+- `docs/HCDIAG.md` — enabling support-bundle collection, what it gathers, how
+  the subprocess is contained, and what to check before sending a bundle on.
 
 ### Notes
 

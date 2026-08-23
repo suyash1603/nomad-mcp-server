@@ -17,6 +17,7 @@ import (
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/allocs"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/catalog"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/diag"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/enterprise"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/jobs"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/nodes"
@@ -48,6 +49,10 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		system.GetSchedulerConfig(p),
 		system.CheckConnection(p),
 		system.Search(p),
+
+		// Diagnostics. The only tool that runs a local binary, and the only
+		// one with its own enable switch; see pkg/tools/diag.
+		diag.CollectHCDiag(p),
 
 		// System and cluster (write).
 		system.CreateNodePool(p),

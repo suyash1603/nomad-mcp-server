@@ -385,6 +385,6 @@ func TestCatalogSize(t *testing.T) {
 	p := testProvider(t, true)
 	all := Catalog(p)
 
-	require.GreaterOrEqual(t, len(all), 81, "tools appear to have gone missing from the catalog")
+	require.GreaterOrEqual(t, len(all), 82, "tools appear to have gone missing from the catalog")
 	require.Equal(t, len(expectedMutatingTools), 34)
 }

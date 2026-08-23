@@ -19,6 +19,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -62,6 +63,10 @@ const (
 	EnvAllowVariableReads = "NOMAD_MCP_ALLOW_VARIABLE_READS"
 	EnvMaxLogBytes        = "NOMAD_MCP_MAX_LOG_BYTES"
 	EnvAllowDestructive   = "NOMAD_MCP_ALLOW_DESTRUCTIVE"
+	EnvEnableHCDiag       = "NOMAD_MCP_ENABLE_HCDIAG"
+	EnvHCDiagPath         = "NOMAD_MCP_HCDIAG_PATH"
+	EnvHCDiagDest         = "NOMAD_MCP_HCDIAG_DEST"
+	EnvHCDiagTimeout      = "NOMAD_MCP_HCDIAG_TIMEOUT"
 	EnvEnterprise         = "NOMAD_MCP_ENTERPRISE"
 	EnvLogFile            = "NOMAD_MCP_LOG_FILE"
 	EnvLogLevel           = "NOMAD_MCP_LOG_LEVEL"
@@ -95,6 +100,17 @@ const (
 	// gate they did not know about would look like a broken tool. Operators who
 	// do want the middle tier set it to false.
 	DefaultAllowDestructive = true
+
+	// DefaultHCDiagPath is the name looked up on PATH. It is configuration
+	// rather than a tool argument on purpose: the model must not be able to
+	// choose which binary this server executes.
+	DefaultHCDiagPath = "hcdiag"
+
+	// DefaultHCDiagTimeout bounds a collection. hcdiag runs debug bundles and
+	// metrics intervals that legitimately take minutes, so this is generous —
+	// but it is bounded, because a wedged child process would otherwise hold a
+	// tool call open forever.
+	DefaultHCDiagTimeout = "10m"
 
 	// DefaultEnterprise is "auto": probe the cluster once at startup and offer
 	// the Enterprise-only tools unless the cluster is known to be Community
@@ -173,6 +189,14 @@ var settings = []setting{
 		"Maximum bytes returned by log and allocation file reads before truncation"},
 	{"allow-destructive", EnvAllowDestructive, kindBool, DefaultAllowDestructive, scopeRoot,
 		"Allow tools that discard state or interrupt running work. Set false for a writes-but-nothing-irreversible tier"},
+	{"enable-hcdiag", EnvEnableHCDiag, kindBool, false, scopeRoot,
+		"Allow collect_hcdiag to execute the local hcdiag binary and write a support bundle to disk"},
+	{"hcdiag-path", EnvHCDiagPath, kindString, DefaultHCDiagPath, scopeRoot,
+		"Path to the hcdiag binary, or a name to look up on PATH"},
+	{"hcdiag-dest", EnvHCDiagDest, kindString, "", scopeRoot,
+		"Directory bundles must be written under. Confines collect_hcdiag; default is the system temp directory"},
+	{"hcdiag-timeout", EnvHCDiagTimeout, kindString, DefaultHCDiagTimeout, scopeRoot,
+		"Maximum time one hcdiag collection may run before it is killed"},
 	{"enterprise", EnvEnterprise, kindString, DefaultEnterprise, scopeRoot,
 		"Offer the Nomad Enterprise-only tools: auto (probe the cluster), true (always), or false (never)"},
 
@@ -226,6 +250,13 @@ type Config struct {
 	MaxLogBytes        int64
 	AllowDestructive   bool
 	Enterprise         string
+
+	// hcdiag. This is the only tool that runs a local binary, so it carries
+	// its own opt-in rather than riding on the read-only setting.
+	EnableHCDiag  bool
+	HCDiagPath    string
+	HCDiagDest    string
+	HCDiagTimeout time.Duration
 
 	// Logging.
 	LogFile  string
@@ -331,6 +362,9 @@ func Load() (*Config, error) {
 		AllowVariableReads: viper.GetBool("allow-variable-reads"),
 		MaxLogBytes:        int64(viper.GetInt("max-log-bytes")),
 		AllowDestructive:   viper.GetBool("allow-destructive"),
+		EnableHCDiag:       viper.GetBool("enable-hcdiag"),
+		HCDiagPath:         strings.TrimSpace(viper.GetString("hcdiag-path")),
+		HCDiagDest:         strings.TrimSpace(viper.GetString("hcdiag-dest")),
 		Enterprise:         strings.ToLower(strings.TrimSpace(viper.GetString("enterprise"))),
 
 		LogFile:  viper.GetString("log-file"),
@@ -354,6 +388,20 @@ func Load() (*Config, error) {
 	if c.Enterprise == "" {
 		c.Enterprise = DefaultEnterprise
 	}
+	if c.HCDiagPath == "" {
+		c.HCDiagPath = DefaultHCDiagPath
+	}
+
+	timeout, err := time.ParseDuration(orDefault(viper.GetString("hcdiag-timeout"), DefaultHCDiagTimeout))
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s %q: expected a Go duration such as %q",
+			EnvHCDiagTimeout, viper.GetString("hcdiag-timeout"), DefaultHCDiagTimeout)
+	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("invalid %s %q: must be greater than zero",
+			EnvHCDiagTimeout, timeout)
+	}
+	c.HCDiagTimeout = timeout
 
 	// Parity with vault-mcp-server: setting any of the HTTP transport
 	// variables selects HTTP mode even when TRANSPORT_MODE itself is unset.
@@ -506,3 +554,22 @@ func (c *Config) EnterpriseNever() bool { return c.Enterprise == "false" }
 
 // EnterpriseAuto reports whether the decision is left to a cluster probe.
 func (c *Config) EnterpriseAuto() bool { return c.Enterprise == "auto" || c.Enterprise == "" }
+
+// orDefault returns v, or def when v is empty after trimming.
+func orDefault(v, def string) string {
+	if trimmed := strings.TrimSpace(v); trimmed != "" {
+		return trimmed
+	}
+	return def
+}
+
+// DefaultHCDiagTimeoutForTests parses DefaultHCDiagTimeout. It exists so tests
+// can build a Config by hand without duplicating the parse, and so a typo in
+// the default is caught by the first test that constructs one.
+func DefaultHCDiagTimeoutForTests() time.Duration {
+	d, err := time.ParseDuration(DefaultHCDiagTimeout)
+	if err != nil {
+		panic("DefaultHCDiagTimeout is not a valid duration: " + DefaultHCDiagTimeout)
+	}
+	return d
+}
