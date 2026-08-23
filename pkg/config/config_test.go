@@ -298,3 +298,65 @@ func TestHelpDocumentsEnvVars(t *testing.T) {
 			"--help should mention %s for --%s", s.env, s.key)
 	}
 }
+
+// --- the new safety and edition knobs ---------------------------------------
+
+func TestEnterpriseModeAcceptsItsThreeValues(t *testing.T) {
+	for _, v := range []string{"auto", "true", "false"} {
+		c := &Config{
+			Enterprise:       v,
+			MaxLogBytes:      DefaultMaxLogBytes,
+			MCPCORSMode:      DefaultCORSMode,
+			TransportMode:    DefaultTransportMode,
+			LogLevel:         DefaultLogLevel,
+			RateLimitGlobal:  DefaultRateLimitGlob,
+			RateLimitSession: DefaultRateLimitSess,
+		}
+		require.NoError(t, c.Validate(), "%q should be a valid NOMAD_MCP_ENTERPRISE", v)
+	}
+}
+
+func TestEnterpriseModeRejectsAnythingElse(t *testing.T) {
+	c := &Config{
+		Enterprise:       "yes",
+		MaxLogBytes:      DefaultMaxLogBytes,
+		MCPCORSMode:      DefaultCORSMode,
+		TransportMode:    DefaultTransportMode,
+		LogLevel:         DefaultLogLevel,
+		RateLimitGlobal:  DefaultRateLimitGlob,
+		RateLimitSession: DefaultRateLimitSess,
+	}
+
+	err := c.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), EnvEnterprise,
+		"the error must name the variable the operator has to fix")
+}
+
+func TestEnterpriseModeHelpers(t *testing.T) {
+	require.True(t, (&Config{Enterprise: "auto"}).EnterpriseAuto())
+	require.True(t, (&Config{Enterprise: ""}).EnterpriseAuto(),
+		"an unset value must behave as auto rather than as never")
+	require.True(t, (&Config{Enterprise: "true"}).EnterpriseAlways())
+	require.True(t, (&Config{Enterprise: "false"}).EnterpriseNever())
+
+	// The three are mutually exclusive; a mode that answered yes to two would
+	// make the decision in includeEnterpriseTools order-dependent.
+	for _, v := range []string{"auto", "true", "false"} {
+		c := &Config{Enterprise: v}
+		n := 0
+		for _, on := range []bool{c.EnterpriseAuto(), c.EnterpriseAlways(), c.EnterpriseNever()} {
+			if on {
+				n++
+			}
+		}
+		require.Equal(t, 1, n, "%q should match exactly one mode", v)
+	}
+}
+
+// Enabling writes must still enable all of them. A second gate defaulting to
+// closed would silently break every operator already running with writes on.
+func TestDestructiveIsAllowedByDefault(t *testing.T) {
+	require.True(t, DefaultAllowDestructive,
+		"turning off read-only must not leave destructive tools quietly blocked")
+}

@@ -198,10 +198,26 @@ func (s *Server) loadDefaults() {
 	}})
 	s.JSON("/v1/volumes", []*api.CSIVolumeListStub{})
 
+	// The agent identifies itself as Community Edition, matching the version
+	// the members fixture advertises. Edition detection reads this, and the
+	// tools that branch on edition are only exercised if it is here.
+	s.JSON("/v1/agent/self", &api.AgentSelf{
+		Config: map[string]any{},
+		Member: api.AgentMember{
+			Name: "server-1.global",
+			Tags: map[string]string{"build": "1.9.0"},
+		},
+		Stats: map[string]map[string]string{"nomad": {"version": "1.9.0"}},
+	})
+
 	// Enterprise-only endpoints answer the way a Community Edition agent does.
 	// Several tools have to distinguish "this cluster cannot do that" from
-	// "that failed", and this is where that gets exercised.
-	for _, path := range []string{"/v1/quotas", "/v1/sentinel/policies", "/v1/recommendations"} {
+	// "that failed", and this is where that gets exercised. The licence
+	// endpoint is among them, and is what makes the edition probe conclusive.
+	for _, path := range []string{
+		"/v1/quotas", "/v1/sentinel/policies", "/v1/recommendations",
+		"/v1/operator/license",
+	} {
 		s.EnterpriseOnly(path)
 	}
 }

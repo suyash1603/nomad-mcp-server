@@ -235,7 +235,14 @@ func planEdit(ctx context.Context, req mcp.CallToolRequest, p *client.Provider,
 			out["diff"] = summariseDiff(plan.Diff)
 		}
 		effects := map[string]int{}
-		for group, updates := range plan.Annotations.DesiredTGUpdates {
+		annotations := map[string]*api.DesiredUpdates{}
+		if plan.Annotations != nil {
+			annotations = plan.Annotations.DesiredTGUpdates
+		}
+		for group, updates := range annotations {
+			if updates == nil {
+				continue
+			}
 			for kind, n := range map[string]uint64{
 				"create":          updates.Place,
 				"destroy":         updates.Stop,
