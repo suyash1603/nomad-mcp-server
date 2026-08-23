@@ -1,8 +1,7 @@
-# Try it in ten minutes
+# Quickstart
 
-You have been sent this repo and asked to kick the tyres. This is the short
-path: a throwaway Nomad on your laptop, the server wired into your MCP client,
-and five things to ask it.
+Ten minutes from nothing to a working setup: a throwaway Nomad on your laptop,
+the server wired into your MCP client, and five things to ask it.
 
 Nothing here touches a real cluster. If you would rather point it at one, skip
 to [Pointing it at a real cluster](#pointing-it-at-a-real-cluster) at the end —
@@ -169,7 +168,7 @@ claude mcp remove nomad
 
 ---
 
-## What to report, and where
+## If something looks wrong
 
 Open an issue: **https://github.com/suyash1603/nomad-mcp-server/issues**
 

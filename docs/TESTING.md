@@ -4,7 +4,7 @@ Every command in order, what you should see, and what it means if you see
 something else. Copy-paste it top to bottom; nothing here depends on anything
 outside this repository except Go, Nomad, Docker and Node.
 
-If you only have ten minutes, read [TEAM-TESTING.md](TEAM-TESTING.md) instead.
+If you only have ten minutes, read [QUICKSTART.md](QUICKSTART.md) instead.
 
 ---
 

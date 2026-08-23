@@ -4,7 +4,7 @@ contact_links:
     url: https://github.com/suyash1603/nomad-mcp-server/security/advisories/new
     about: Report privately. Please do not open a public issue.
   - name: Try it in ten minutes
-    url: https://github.com/suyash1603/nomad-mcp-server/blob/main/docs/TEAM-TESTING.md
+    url: https://github.com/suyash1603/nomad-mcp-server/blob/main/docs/QUICKSTART.md
     about: The quickstart, before filing a setup problem.
   - name: Nomad documentation
     url: https://developer.hashicorp.com/nomad/docs

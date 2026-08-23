@@ -582,14 +582,13 @@ the reason it exists rather than a claim that the alternatives are wrong:
 
 | Document | For |
 |---|---|
-| [docs/TEAM-TESTING.md](docs/TEAM-TESTING.md) | **Start here** if someone sent you this repo. Under ten minutes. |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | **Start here.** Running in under ten minutes. |
 | [docs/CONNECTING.md](docs/CONNECTING.md) | Pointing this at a cluster: local, Docker, EC2, Kubernetes, TLS, tokens |
 | [docs/ENTERPRISE.md](docs/ENTERPRISE.md) | Community Edition vs Enterprise, and the twelve tools that need a licence |
 | [docs/HCDIAG.md](docs/HCDIAG.md) | Support-bundle collection: enabling it, what it gathers, and handling the result |
 | [docs/TESTING.md](docs/TESTING.md) | The full copy-pasteable test script, every path |
 | [docs/SECURITY.md](docs/SECURITY.md) | Threat model: token scope, prompt injection, what a compromised client gets |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Guided tour of the codebase, layer by layer |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to add a tool |
 
 ---
 
