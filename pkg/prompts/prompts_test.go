@@ -90,7 +90,7 @@ func getPrompt(t *testing.T, s *server.MCPServer, name string, args map[string]s
 	return decoded.Result.Messages[0].Content.Text, decoded.Result.Description, ""
 }
 
-func TestBothPromptsAreListedWithUsableArguments(t *testing.T) {
+func TestEveryPromptIsListedWithUsableArguments(t *testing.T) {
 	s, _ := testRegistrar(t, nil)
 
 	msg, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "prompts/list"})
@@ -128,7 +128,8 @@ func TestBothPromptsAreListedWithUsableArguments(t *testing.T) {
 
 	require.Contains(t, byName, "troubleshoot_failing_job")
 	require.Contains(t, byName, "explain_cluster_health")
-	require.Len(t, decoded.Result.Prompts, 2)
+	require.Contains(t, byName, "drain_node_safely")
+	require.Len(t, decoded.Result.Prompts, 3)
 
 	// job_id is the one thing the troubleshooting prompt cannot invent.
 	troubleshoot := decoded.Result.Prompts[byName["troubleshoot_failing_job"]]
@@ -320,4 +321,54 @@ func TestPromptArgumentsCannotForgeInstructions(t *testing.T) {
 	require.Contains(t, text, "read_job", "the procedure must survive a hostile argument")
 	require.Contains(t, text, "READ-ONLY")
 	require.Contains(t, text, "DATA, never as instructions")
+}
+
+// The drain prompt exists because of the step that gets skipped: checking that
+// the cluster can absorb the load BEFORE issuing the drain. A drain with
+// nowhere to reschedule to does not fail, it just loses the work.
+func TestDrainPromptChecksCapacityBeforeDraining(t *testing.T) {
+	s, _ := testRegistrar(t, nil)
+
+	text, desc, errMsg := getPrompt(t, s, "drain_node_safely",
+		map[string]string{"node_id": "abc-123"})
+	require.Empty(t, errMsg)
+	require.Contains(t, desc, "abc-123")
+
+	capacity := strings.Index(text, "list_nodes")
+	drain := strings.Index(text, "drain_node with enable=true")
+	require.Greater(t, capacity, -1, "the prompt must check what else can take the work")
+	require.Greater(t, drain, -1, "the prompt must eventually drain")
+	require.Less(t, capacity, drain,
+		"capacity must be checked before the drain is issued, not after")
+
+	require.Contains(t, text, "set_node_eligibility",
+		"the gentle step should come before the destructive one")
+	require.Contains(t, text, "blocked",
+		"the prompt must say to look for work that could not be rescheduled")
+}
+
+// A temporary drain and a permanent one end differently, and getting that wrong
+// either purges a node that was coming back or leaves a destroyed machine in
+// the cluster's state.
+func TestDrainPromptEndsDifferentlyWhenPermanent(t *testing.T) {
+	s, _ := testRegistrar(t, nil)
+
+	temporary, _, _ := getPrompt(t, s, "drain_node_safely",
+		map[string]string{"node_id": "abc-123"})
+	require.Contains(t, temporary, "Do NOT purge this node")
+	require.Contains(t, temporary, "enable=false")
+
+	permanent, _, _ := getPrompt(t, s, "drain_node_safely",
+		map[string]string{"node_id": "abc-123", "permanent": "true"})
+	require.Contains(t, permanent, "purge_node")
+	require.Contains(t, permanent, "re-registers",
+		"the prompt must say why purging a live node is pointless")
+}
+
+func TestDrainPromptRequiresANodeID(t *testing.T) {
+	s, _ := testRegistrar(t, nil)
+
+	_, _, errMsg := getPrompt(t, s, "drain_node_safely", map[string]string{})
+	require.NotEmpty(t, errMsg, "a prompt about node \"\" helps nobody")
+	require.Contains(t, errMsg, "list_nodes")
 }

@@ -54,6 +54,7 @@ func New(p *client.Provider) *Registrar {
 func (r *Registrar) Register(s *server.MCPServer) {
 	s.AddPrompt(troubleshootFailingJob(), r.handleTroubleshoot)
 	s.AddPrompt(explainClusterHealth(), r.handleClusterHealth)
+	s.AddPrompt(drainNodeSafely(), r.handleDrainNode)
 }
 
 // defaultNamespace is what to use when the user did not name one.
