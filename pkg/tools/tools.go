@@ -49,6 +49,7 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		system.GetSchedulerConfig(p),
 		system.GetAutopilotConfig(p),
 		system.GetAutopilotHealth(p),
+		system.GetRaftConfig(p),
 		system.CheckConnection(p),
 		system.Search(p),
 
@@ -61,6 +62,8 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		system.DeleteNodePool(p),
 		system.SetSchedulerConfig(p),
 		system.SetAutopilotConfig(p),
+		system.RemoveRaftPeer(p),
+		system.TransferLeadership(p),
 
 		// Jobs (read).
 		jobs.ListJobs(p),

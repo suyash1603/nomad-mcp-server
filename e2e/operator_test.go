@@ -461,3 +461,71 @@ func TestSetAutopilotConfigRejectsABareNumberAgainstARealAgent(t *testing.T) {
 		t.Errorf("the refusal should explain the expected form; got:\n%s", msg)
 	}
 }
+
+// A dev agent is a single-server cluster, so its Raft configuration has exactly
+// one peer, which is the leader and a voter. What this proves that a fake
+// cannot is the endpoint path and that the quorum arithmetic is computed over
+// what Nomad actually returns.
+func TestRaftConfigAgainstARealAgent(t *testing.T) {
+	c := newClient(t)
+
+	out := c.tool("get_raft_config", nil)
+
+	servers, ok := out["servers"].([]any)
+	if !ok || len(servers) != 1 {
+		t.Fatalf("a dev agent should have exactly one Raft peer: %s", mustJSON(t, out))
+	}
+
+	peer, _ := servers[0].(map[string]any)
+	if leader, _ := peer["leader"].(bool); !leader {
+		t.Errorf("the single peer should be the leader: %s", mustJSON(t, out))
+	}
+	if voter, _ := peer["voter"].(bool); !voter {
+		t.Errorf("the single peer should be a voter: %s", mustJSON(t, out))
+	}
+	if orphaned, _ := peer["orphaned"].(bool); orphaned {
+		t.Errorf("a live dev agent must not be flagged orphaned: %s", mustJSON(t, out))
+	}
+
+	// One voter means a quorum of one and no tolerance for loss.
+	if q, _ := out["quorum_required"].(float64); q != 1 {
+		t.Errorf("quorum_required should be 1 for a single-voter cluster, got %v", q)
+	}
+	if ft, _ := out["failure_tolerance"].(float64); ft != 0 {
+		t.Errorf("failure_tolerance should be 0 for a single-voter cluster, got %v", ft)
+	}
+}
+
+// The dev agent is alive and is the leader, so both guards should fire against
+// it. This is the pair that proves the refusals are reachable with real data
+// rather than only with a hand-built fixture.
+func TestRaftWriteGuardsAgainstARealAgent(t *testing.T) {
+	c := newClient(t, "NOMAD_MCP_READ_ONLY=false")
+
+	peerID := firstRaftPeerID(t, c.tool("get_raft_config", nil))
+
+	msg := c.toolFails("remove_raft_peer", map[string]any{"peer_id": peerID})
+	if !strings.Contains(msg, "LEADER") {
+		t.Errorf("removing the only peer should be refused as the leader; got:\n%s", msg)
+	}
+
+	msg = c.toolFails("transfer_leadership", map[string]any{"peer_id": "no-such-peer"})
+	if !strings.Contains(msg, "No Raft peer matches") {
+		t.Errorf("an unknown peer should be named as such; got:\n%s", msg)
+	}
+}
+
+func firstRaftPeerID(t *testing.T, out map[string]any) string {
+	t.Helper()
+
+	servers, ok := out["servers"].([]any)
+	if !ok || len(servers) == 0 {
+		t.Fatalf("no Raft peers returned: %s", mustJSON(t, out))
+	}
+	peer, _ := servers[0].(map[string]any)
+	id, _ := peer["id"].(string)
+	if id == "" {
+		t.Fatalf("the Raft peer has no id: %s", mustJSON(t, out))
+	}
+	return id
+}

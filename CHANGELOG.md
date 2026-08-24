@@ -12,8 +12,8 @@ output shapes.
 
 ### Added
 
-- **Three Autopilot tools**, bringing the catalog to 85 tools — 50 that only
-  read and 35 that make changes.
+- **Three Autopilot tools and three Raft tools**, bringing the catalog to 88
+  tools — 51 that only read and 37 that make changes.
 
   - `get_autopilot_health` reports Autopilot's assessment of the server fleet:
     how many more servers can be lost before quorum goes, which servers are
@@ -41,6 +41,30 @@ output shapes.
   Autopilot governs the server fleet and Raft quorum, which is a different
   subsystem from the scheduler configuration tools; all three say so, since the
   two are easy to confuse.
+
+- **Three Raft tools.** Autopilot reports on the servers it knows about; Raft
+  counts the entries in its configuration. They differ in the case that matters,
+  and until now nothing here could see the difference.
+
+  - `get_raft_config` reports the peer set and the quorum arithmetic, flagging
+    entries Nomad shows as `(unknown)` — servers that were destroyed or replaced
+    but never removed. Those still count toward quorum while contributing
+    nothing to it, which is how a cluster with three live servers turns out to
+    need three of five votes to elect a leader.
+  - `remove_raft_peer` removes such an entry, which lowers the quorum
+    requirement and can be what lets a cluster elect a leader again. It refuses
+    to remove the leader, and refuses to remove a peer Autopilot currently
+    reports as healthy — the `purge_node` guard applied to servers. That health
+    check is best-effort by design: it is answered by the leader, so it fails on
+    precisely the leaderless cluster where removing a dead peer is the repair,
+    and a failure to check reports itself rather than blocking the fix.
+  - `transfer_leadership` hands leadership to another server before taking the
+    leader out of service. It refuses a non-voter, an orphaned entry and an
+    unhealthy target, and reports that the transfer completes asynchronously
+    rather than implying it is already done.
+
+  Both writes are annotated destructive, so they are refused under
+  `NOMAD_MCP_ALLOW_DESTRUCTIVE=false`.
 
 ### Changed
 

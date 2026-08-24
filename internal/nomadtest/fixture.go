@@ -240,6 +240,20 @@ func (s *Server) loadDefaults() {
 		}},
 	})
 
+	// The Raft peer set behind that health report: one voter, which is the
+	// leader, speaking protocol 3.
+	s.JSON("/v1/operator/raft/configuration", &api.RaftConfiguration{
+		Index: 4242,
+		Servers: []*api.RaftServer{{
+			ID:           ServerID,
+			Node:         "server-1.global",
+			Address:      "10.0.0.1:4647",
+			Leader:       true,
+			Voter:        true,
+			RaftProtocol: "3",
+		}},
+	})
+
 	// Enterprise-only endpoints answer the way a Community Edition agent does.
 	// Several tools have to distinguish "this cluster cannot do that" from
 	// "that failed", and this is where that gets exercised. The licence

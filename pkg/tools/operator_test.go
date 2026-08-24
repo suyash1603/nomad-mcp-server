@@ -5,6 +5,7 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -921,4 +922,261 @@ func TestSetAutopilotConfigWarnsWhenItEnablesPeerRemoval(t *testing.T) {
 	require.Contains(t, warnings, "Raft peer set")
 	require.Contains(t, warnings, "min_quorum = 3",
 		"the floor that limits the pruning should be stated alongside it")
+}
+
+// --- raft ---------------------------------------------------------------------
+
+// raftFleet builds a peer set: three live voters, and however many orphaned
+// entries are asked for. The orphaned entry — Node "(unknown)" — is the whole
+// reason this tool exists, so most of these tests need one.
+func raftFleet(orphans int) *api.RaftConfiguration {
+	cfg := &api.RaftConfiguration{Index: 99}
+	for i := 1; i <= 3; i++ {
+		cfg.Servers = append(cfg.Servers, &api.RaftServer{
+			ID:           fmt.Sprintf("id-%d", i),
+			Node:         fmt.Sprintf("server-%d.global", i),
+			Address:      fmt.Sprintf("10.0.0.%d:4647", i),
+			Leader:       i == 1,
+			Voter:        true,
+			RaftProtocol: "3",
+		})
+	}
+	for i := 1; i <= orphans; i++ {
+		cfg.Servers = append(cfg.Servers, &api.RaftServer{
+			ID:           fmt.Sprintf("dead-%d", i),
+			Node:         "(unknown)",
+			Address:      fmt.Sprintf("10.0.9.%d:4647", i),
+			Voter:        true,
+			RaftProtocol: "3",
+		})
+	}
+	return cfg
+}
+
+func TestGetRaftConfigComputesQuorumFromTheVoterSet(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(0))
+
+	out := h.ok("get_raft_config", nil)
+
+	require.EqualValues(t, 3, out["server_count"])
+	require.EqualValues(t, 3, out["voter_count"])
+	require.EqualValues(t, 2, out["quorum_required"])
+	require.EqualValues(t, 1, out["failure_tolerance"])
+	require.Equal(t, "server-1.global", out["leader"])
+	require.Equal(t, false, out["degraded"])
+}
+
+// An orphaned entry still counts toward quorum, which is what makes a cluster
+// with "enough servers running" unable to elect a leader.
+func TestGetRaftConfigFlagsOrphanedPeersAndTheirQuorumCost(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(2))
+
+	out := h.ok("get_raft_config", nil)
+
+	require.EqualValues(t, 5, out["voter_count"])
+	require.EqualValues(t, 3, out["quorum_required"],
+		"the dead entries must still be counted; that is the whole problem")
+	require.Equal(t, true, out["degraded"])
+
+	orphaned := 0
+	for _, s := range objectsOf(t, out["servers"]) {
+		if o, _ := s["orphaned"].(bool); o {
+			orphaned++
+		}
+	}
+	require.Equal(t, 2, orphaned)
+
+	warnings := strings.Join(stringsOf(t, out["warnings"]), " ")
+	require.Contains(t, warnings, "ORPHANED")
+	require.Contains(t, warnings, "10.0.9.1:4647", "the orphaned entry must be named")
+	require.Contains(t, warnings, "remove_raft_peer")
+}
+
+func TestGetRaftConfigExplainsAnEvenVoterCount(t *testing.T) {
+	h := newHarness(t)
+	cfg := raftFleet(0)
+	cfg.Servers = append(cfg.Servers, &api.RaftServer{
+		ID: "id-4", Node: "server-4.global", Address: "10.0.0.4:4647",
+		Voter: true, RaftProtocol: "3",
+	})
+	h.nomad.JSON("/v1/operator/raft/configuration", cfg)
+
+	warnings := strings.Join(stringsOf(t, h.ok("get_raft_config", nil)["warnings"]), " ")
+	require.Contains(t, warnings, "even number")
+	require.Contains(t, warnings, "no fault tolerance over 3",
+		"the point is that the 4th voter buys nothing over 3")
+}
+
+func TestGetRaftConfigWarnsAboutAnOldRaftProtocol(t *testing.T) {
+	h := newHarness(t)
+	cfg := raftFleet(0)
+	cfg.Servers[2].RaftProtocol = "2"
+	h.nomad.JSON("/v1/operator/raft/configuration", cfg)
+
+	warnings := strings.Join(stringsOf(t, h.ok("get_raft_config", nil)["warnings"]), " ")
+	require.Contains(t, warnings, "protocol 2")
+	require.Contains(t, warnings, "remove_raft_peer")
+}
+
+// --- remove_raft_peer ---------------------------------------------------------
+
+// unhealthyFleet makes Autopilot report the three live servers, with server-3
+// unhealthy — so removing its peer is allowed and removing the others is not.
+func unhealthyFleet() *api.OperatorHealthReply {
+	return &api.OperatorHealthReply{
+		Healthy: false,
+		Servers: []api.ServerHealth{
+			{ID: "id-1", Name: "server-1.global", Address: "10.0.0.1:4647", Healthy: true, Voter: true, Leader: true},
+			{ID: "id-2", Name: "server-2.global", Address: "10.0.0.2:4647", Healthy: true, Voter: true},
+			{ID: "id-3", Name: "server-3.global", Address: "10.0.0.3:4647", Healthy: false, Voter: true},
+		},
+	}
+}
+
+// The two Raft writes use different verbs: removal is a DELETE, leadership
+// transfer is a PUT. Pinning the verb here is deliberate — a handler registered
+// on the wrong one silently never matches, and the test would fail as "no such
+// resource" rather than as a wrong assertion.
+func raftAccepts(h *harness, method, path string) {
+	h.nomad.Handle(method+" "+path, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+}
+
+func TestRemoveRaftPeerRemovesAnOrphanedEntryByAddress(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(1))
+	h.nomad.JSON("/v1/operator/autopilot/health", unhealthyFleet())
+	raftAccepts(h, http.MethodDelete, "/v1/operator/raft/peer")
+
+	// An orphaned entry has no node name, so its address is what a caller has.
+	out := h.ok("remove_raft_peer", map[string]any{"peer_id": "10.0.9.1:4647"})
+
+	require.Equal(t, "10.0.9.1:4647", out["removed"])
+	require.Equal(t, true, out["was_orphaned"])
+	require.EqualValues(t, 4, out["voters_before"])
+	require.EqualValues(t, 3, out["voters_after"])
+	require.EqualValues(t, 3, out["quorum_before"])
+	require.EqualValues(t, 2, out["quorum_after"],
+		"removing a dead voter is what lowers the quorum requirement")
+
+	require.Equal(t, "dead-1", h.nomad.Last("/v1/operator/raft/peer").Query.Get("id"),
+		"the peer must be removed by the ID from the configuration, not the string given")
+}
+
+// The guard that matters: a live server must not be stripped of its vote.
+func TestRemoveRaftPeerRefusesAServerAutopilotCallsHealthy(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(1))
+	h.nomad.JSON("/v1/operator/autopilot/health", unhealthyFleet())
+
+	msg := h.fails("remove_raft_peer", map[string]any{"peer_id": "id-2"})
+	require.Contains(t, msg, "HEALTHY")
+	require.Contains(t, msg, "has to rejoin")
+	require.Contains(t, msg, "cleanup_dead_servers",
+		"the refusal should point at the setting that does this safely")
+
+	for _, req := range h.nomad.Requests() {
+		require.NotEqual(t, http.MethodDelete, req.Method, "nothing should have been removed")
+	}
+}
+
+func TestRemoveRaftPeerRefusesTheLeader(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(0))
+	h.nomad.JSON("/v1/operator/autopilot/health", unhealthyFleet())
+
+	msg := h.fails("remove_raft_peer", map[string]any{"peer_id": "id-1"})
+	require.Contains(t, msg, "LEADER")
+	require.Contains(t, msg, "transfer_leadership")
+}
+
+// Autopilot health is answered by the leader, so it fails on exactly the
+// cluster where removing a dead peer is the repair. That must not block it.
+func TestRemoveRaftPeerProceedsWhenTheHealthCheckCannotBeMade(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(1))
+	h.nomad.Status("/v1/operator/autopilot/health", http.StatusInternalServerError, "no cluster leader")
+	raftAccepts(h, http.MethodDelete, "/v1/operator/raft/peer")
+
+	out := h.ok("remove_raft_peer", map[string]any{"peer_id": "dead-1"})
+	require.Equal(t, "10.0.9.1:4647", out["removed"])
+	require.Contains(t, out["health_check"], "could not be read",
+		"the un-cross-checked removal must say so rather than implying it was verified")
+}
+
+func TestRemoveRaftPeerListsThePeersWhenTheIDIsWrong(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(1))
+
+	msg := h.fails("remove_raft_peer", map[string]any{"peer_id": "10.0.9.9:4647"})
+	require.Contains(t, msg, "No Raft peer matches")
+	require.Contains(t, msg, "server-1.global", "the message should list what does exist")
+	require.Contains(t, msg, "dead-1")
+}
+
+// --- transfer_leadership ------------------------------------------------------
+
+func TestTransferLeadershipMovesToAHealthyVoter(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(0))
+	h.nomad.JSON("/v1/operator/autopilot/health", unhealthyFleet())
+	raftAccepts(h, http.MethodPut, "/v1/operator/raft/transfer-leadership")
+
+	out := h.ok("transfer_leadership", map[string]any{"peer_id": "id-2"})
+
+	require.Equal(t, true, out["changed"])
+	require.Equal(t, "server-2.global (10.0.0.2:4647)", out["to"])
+	require.Equal(t, "server-1.global (10.0.0.1:4647)", out["from"])
+	require.Contains(t, out["note"], "asynchronously",
+		"the caller must not assume the transfer has already completed")
+}
+
+func TestTransferLeadershipIsANoOpForTheCurrentLeader(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(0))
+
+	out := h.ok("transfer_leadership", map[string]any{"peer_id": "id-1"})
+	require.Equal(t, false, out["changed"])
+	for _, req := range h.nomad.Requests() {
+		require.NotEqual(t, http.MethodPut, req.Method,
+			"transferring to the current leader must not cost an election")
+	}
+}
+
+func TestTransferLeadershipRefusesANonVoter(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	cfg := raftFleet(0)
+	cfg.Servers = append(cfg.Servers, &api.RaftServer{
+		ID: "id-4", Node: "server-4.global", Address: "10.0.0.4:4647",
+		Voter: false, RaftProtocol: "3",
+	})
+	h.nomad.JSON("/v1/operator/raft/configuration", cfg)
+
+	msg := h.fails("transfer_leadership", map[string]any{"peer_id": "id-4"})
+	require.Contains(t, msg, "NOT a voter")
+	require.Contains(t, msg, "server_stabilization_time",
+		"the likely reason is that it is still stabilising, and that should be said")
+}
+
+func TestTransferLeadershipRefusesAnUnhealthyTarget(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(0))
+	h.nomad.JSON("/v1/operator/autopilot/health", unhealthyFleet())
+
+	msg := h.fails("transfer_leadership", map[string]any{"peer_id": "id-3"})
+	require.Contains(t, msg, "UNHEALTHY")
+	require.Contains(t, msg, "outage")
+}
+
+func TestTransferLeadershipRefusesAnOrphanedEntry(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/raft/configuration", raftFleet(1))
+
+	msg := h.fails("transfer_leadership", map[string]any{"peer_id": "dead-1"})
+	require.Contains(t, msg, "ORPHANED")
+	require.Contains(t, msg, "nothing there to lead")
+	require.Contains(t, msg, "remove_raft_peer")
 }

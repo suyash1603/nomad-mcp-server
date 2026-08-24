@@ -106,6 +106,7 @@ var expectedMutatingTools = []string{
 	"pause_deployment",
 	"promote_deployment",
 	"purge_node",
+	"remove_raft_peer",
 	"restart_allocation",
 	"restart_node_allocations",
 	"revert_job_version",
@@ -119,6 +120,7 @@ var expectedMutatingTools = []string{
 	"signal_allocation",
 	"stop_allocation",
 	"stop_job",
+	"transfer_leadership",
 	"unblock_deployment",
 	"write_sentinel_policy",
 	"write_variable",
@@ -160,6 +162,7 @@ var expectedHints = []struct {
 	{"pause_deployment", true, true},
 	{"promote_deployment", true, true},
 	{"purge_node", true, true},
+	{"remove_raft_peer", true, true},
 	{"restart_allocation", true, true},
 	{"restart_node_allocations", true, true},
 	{"revert_job_version", true, false},
@@ -173,6 +176,7 @@ var expectedHints = []struct {
 	{"signal_allocation", true, false},
 	{"stop_allocation", true, false},
 	{"stop_job", true, false},
+	{"transfer_leadership", true, true},
 	{"unblock_deployment", true, true},
 	{"write_sentinel_policy", true, true},
 	{"write_variable", true, true},
@@ -387,6 +391,6 @@ func TestCatalogSize(t *testing.T) {
 	p := testProvider(t, true)
 	all := Catalog(p)
 
-	require.GreaterOrEqual(t, len(all), 85, "tools appear to have gone missing from the catalog")
-	require.Equal(t, len(expectedMutatingTools), 35)
+	require.GreaterOrEqual(t, len(all), 88, "tools appear to have gone missing from the catalog")
+	require.Equal(t, len(expectedMutatingTools), 37)
 }

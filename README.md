@@ -5,7 +5,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 assistant structured, safe access to a Nomad cluster: what is running, what is
 broken, why, and — when you let it — how to fix it.
 
-85 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
+88 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
 volumes and variables, plus hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
 against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
 API is reachable.
@@ -298,7 +298,7 @@ plaintext, and failing at startup beats a warning nobody reads.
 
 ## Tools
 
-85 tools: **50 read-only** and **35 mutating**. Twelve of them are Enterprise-only
+88 tools: **51 read-only** and **37 mutating**. Twelve of them are Enterprise-only
 and are not registered at all against a cluster identified as Community Edition —
 see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
 
@@ -318,11 +318,14 @@ Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 | R | `get_scheduler_config` | Placement algorithm, preemption, and the two switches that silently stop a cluster scheduling |
 | R | `get_autopilot_health` | Autopilot's verdict on the server fleet: quorum failure tolerance, which servers are voters, how far each trails the leader |
 | R | `get_autopilot_config` | Dead-server cleanup, health thresholds, voter promotion delay and minimum quorum |
+| R | `get_raft_config` | The Raft peer set and the quorum arithmetic, flagging orphaned entries that count toward quorum but no longer exist |
 | R | `list_regions` | Regions this cluster knows about |
 | R | `get_agent_config` | Identity and role of the agent this server is connected to (an allowlist, not a raw dump) |
 | R | `search` | Prefix search across jobs, allocations, nodes, deployments, evaluations and more |
 | W! | `set_scheduler_config` | Change scheduler configuration cluster-wide |
 | W! | `set_autopilot_config` | Change Autopilot configuration — including whether it may remove servers from the Raft peer set |
+| W! | `remove_raft_peer` | Remove a dead server from the Raft peer set, lowering the quorum requirement |
+| W! | `transfer_leadership` | Hand Raft leadership to another server before taking the leader out of service |
 
 ### Support bundles
 

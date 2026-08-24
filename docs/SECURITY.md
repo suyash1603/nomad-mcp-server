@@ -32,7 +32,7 @@ With a sufficiently privileged token, this server can read and return to a model
 | Nomad Variables | `read_variable` | **Your secret store.** Off by default |
 | Node attributes | `read_node` | An allowlist, not the full fingerprint |
 | Agent configuration | `get_agent_config` | An allowlist. Never TLS paths or integration blocks |
-| Server names and addresses | `get_cluster_status`, `get_autopilot_health` | The Raft peer set: server names, advertised addresses and versions |
+| Server names and addresses | `get_cluster_status`, `get_autopilot_health`, `get_raft_config` | The Raft peer set: server names, advertised addresses and versions |
 
 Two of those are projections rather than passthroughs, and it matters:
 
@@ -154,7 +154,7 @@ The refusal names the tool, gives both the environment variable and the flag
 that would change it, and says **do not retry** — without that last part a model
 will burn two or three more turns on the same call.
 
-There is a test for every one of the 34 mutating tools individually.
+There is a test for every one of the 37 mutating tools individually.
 
 ### The destructive tier
 
