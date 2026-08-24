@@ -210,6 +210,36 @@ func (s *Server) loadDefaults() {
 		Stats: map[string]map[string]string{"nomad": {"version": "1.9.0"}},
 	})
 
+	// Autopilot, at Nomad's own defaults. The fixture cluster has a single
+	// server, so its failure tolerance is genuinely 0 — which is what a
+	// one-server cluster looks like, and worth having a tool say out loud.
+	s.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers:      true,
+		LastContactThreshold:    200 * time.Millisecond,
+		MaxTrailingLogs:         250,
+		ServerStabilizationTime: 10 * time.Second,
+	})
+	s.JSON("/v1/operator/autopilot/health", &api.OperatorHealthReply{
+		Healthy:          true,
+		FailureTolerance: 0,
+		Leader:           ServerID,
+		Voters:           []string{ServerID},
+		Servers: []api.ServerHealth{{
+			ID:          ServerID,
+			Name:        "server-1.global",
+			Address:     "10.0.0.1:4647",
+			SerfStatus:  "alive",
+			Version:     "1.9.0",
+			Leader:      true,
+			Healthy:     true,
+			Voter:       true,
+			LastContact: 0,
+			LastTerm:    3,
+			LastIndex:   4242,
+			StableSince: now.Add(-2 * time.Hour),
+		}},
+	})
+
 	// Enterprise-only endpoints answer the way a Community Edition agent does.
 	// Several tools have to distinguish "this cluster cannot do that" from
 	// "that failed", and this is where that gets exercised. The licence

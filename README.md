@@ -5,7 +5,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 assistant structured, safe access to a Nomad cluster: what is running, what is
 broken, why, and — when you let it — how to fix it.
 
-82 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
+85 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
 volumes and variables, plus hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
 against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
 API is reachable.
@@ -298,7 +298,7 @@ plaintext, and failing at startup beats a warning nobody reads.
 
 ## Tools
 
-82 tools: **48 read-only** and **34 mutating**. Twelve of them are Enterprise-only
+85 tools: **50 read-only** and **35 mutating**. Twelve of them are Enterprise-only
 and are not registered at all against a cluster identified as Community Edition —
 see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
 
@@ -316,10 +316,13 @@ Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 | R | `check_connection` | **Start here when anything fails.** Address, TLS, token, ACL state, edition and permission probes — each failure with a concrete fix |
 | R | `get_cluster_status` | Leader, server peers and versions, edition, node counts by state — the whole cluster in one call |
 | R | `get_scheduler_config` | Placement algorithm, preemption, and the two switches that silently stop a cluster scheduling |
+| R | `get_autopilot_health` | Autopilot's verdict on the server fleet: quorum failure tolerance, which servers are voters, how far each trails the leader |
+| R | `get_autopilot_config` | Dead-server cleanup, health thresholds, voter promotion delay and minimum quorum |
 | R | `list_regions` | Regions this cluster knows about |
 | R | `get_agent_config` | Identity and role of the agent this server is connected to (an allowlist, not a raw dump) |
 | R | `search` | Prefix search across jobs, allocations, nodes, deployments, evaluations and more |
 | W! | `set_scheduler_config` | Change scheduler configuration cluster-wide |
+| W! | `set_autopilot_config` | Change Autopilot configuration — including whether it may remove servers from the Raft peer set |
 
 ### Support bundles
 

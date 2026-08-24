@@ -111,6 +111,7 @@ var expectedMutatingTools = []string{
 	"revert_job_version",
 	"run_job",
 	"scale_task_group",
+	"set_autopilot_config",
 	"set_deployment_alloc_health",
 	"set_node_eligibility",
 	"set_node_meta",
@@ -164,6 +165,7 @@ var expectedHints = []struct {
 	{"revert_job_version", true, false},
 	{"run_job", true, false},
 	{"scale_task_group", true, true},
+	{"set_autopilot_config", true, true},
 	{"set_deployment_alloc_health", true, true},
 	{"set_node_eligibility", false, true},
 	{"set_node_meta", false, true},
@@ -385,6 +387,6 @@ func TestCatalogSize(t *testing.T) {
 	p := testProvider(t, true)
 	all := Catalog(p)
 
-	require.GreaterOrEqual(t, len(all), 82, "tools appear to have gone missing from the catalog")
-	require.Equal(t, len(expectedMutatingTools), 34)
+	require.GreaterOrEqual(t, len(all), 85, "tools appear to have gone missing from the catalog")
+	require.Equal(t, len(expectedMutatingTools), 35)
 }

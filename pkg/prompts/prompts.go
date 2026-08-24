@@ -254,26 +254,39 @@ else meaningless if they are wrong, so read them first.
      partially-completed upgrade, and it is worth flagging even when nothing is
      visibly broken.
 
-2. list_nodes — the client fleet. Count nodes that are down, ineligible for
+2. get_autopilot_health — Autopilot's own verdict on the servers, which settles
+   the quorum question that step 1 can only estimate from peer count.
+   • failure_tolerance is the number to lead with. At 0, the cluster survives no
+     further server loss: the next failure is an outage, not a degradation. Say
+     so even when every server is currently healthy, because it looks fine right
+     up until it does not.
+   • A server that is healthy but not a voter is usually still stabilising after
+     joining. One that is a voter but not healthy is trailing the Raft log or
+     out of contact with the leader.
+   • If anything here is wrong, get_autopilot_config has the thresholds that
+     produced the verdict — and cleanup_dead_servers = false is the setting that
+     explains a cluster still counting servers that were decommissioned.
+
+3. list_nodes — the client fleet. Count nodes that are down, ineligible for
    scheduling, or draining. Distinguish them: a down node is a failure, a
    draining node is usually someone doing maintenance on purpose, and an
    ineligible node is often a drain that was never cleaned up afterwards.
    Note the total allocatable capacity against what is already allocated.
 
-3. list_evaluations with filter Status == "blocked" — work Nomad wanted to place
+4. list_evaluations with filter Status == "blocked" — work Nomad wanted to place
    and could not. A non-empty result here is the cluster telling you it is out
    of somewhere to put things. read_evaluation on one or two to find out which
    dimension ran out.
 
-4. list_deployments with filter Status == "running" — rollouts in flight. Any
+5. list_deployments with filter Status == "running" — rollouts in flight. Any
    that require promotion are waiting on a human, not on the cluster, and will
    wait forever. Any that have been running a long time are stalling on health
    checks.
 
-5. list_jobs — jobs with failed or pending allocations. Name them; do not list
+6. list_jobs — jobs with failed or pending allocations. Name them; do not list
    every healthy job.
 
-6. list_node_pools and list_namespaces only if they add something. On a small
+7. list_node_pools and list_namespaces only if they add something. On a small
    cluster they usually do not.
 
 Some of these may fail rather than return data, and the failure is itself

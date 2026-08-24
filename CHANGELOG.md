@@ -10,6 +10,44 @@ output shapes.
 
 ## [Unreleased]
 
+### Added
+
+- **Three Autopilot tools**, bringing the catalog to 85 tools — 50 that only
+  read and 35 that make changes.
+
+  - `get_autopilot_health` reports Autopilot's assessment of the server fleet:
+    how many more servers can be lost before quorum goes, which servers are
+    voters, how far each trails the leader, and how long each has been stable.
+    A failure tolerance of `0` is reported as degraded even when every server
+    is currently healthy, because that cluster looks fine right up until the
+    next server dies and takes the whole control plane with it.
+  - `get_autopilot_config` reports the settings behind those verdicts:
+    dead-server cleanup, the contact and trailing-log thresholds, the voter
+    promotion delay and the minimum quorum. `cleanup_dead_servers = false` is
+    called out specifically — it is the usual reason a cluster that was rolled
+    through a server replacement still counts the servers it no longer has.
+
+  - `set_autopilot_config` changes those settings. It is annotated
+    **destructive**, so it is refused when `NOMAD_MCP_ALLOW_DESTRUCTIVE=false`:
+    turning `cleanup_dead_servers` on gives Autopilot permission to remove
+    servers from the Raft peer set, which is right for pruning replaced servers
+    and wrong for servers that are merely unreachable. It reads the current
+    configuration first so an omitted argument keeps its value rather than
+    resetting, and writes with a compare-and-set on the modify index, so a
+    concurrent change by another operator is refused rather than overwritten.
+    Durations are given as strings (`"200ms"`, `"2m"`); a bare number is
+    refused, since the units it meant cannot be recovered.
+
+  Autopilot governs the server fleet and Raft quorum, which is a different
+  subsystem from the scheduler configuration tools; all three say so, since the
+  two are easy to confuse.
+
+### Changed
+
+- The `explain_cluster_health` prompt now reads `get_autopilot_health` as its
+  second step. It settles the quorum question that server peer count alone can
+  only estimate.
+
 ## [0.1.0] — 2026-08-23
 
 First public release.

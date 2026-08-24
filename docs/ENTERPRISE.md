@@ -17,7 +17,7 @@ At startup it probes the cluster once:
 The result is cached for fifteen minutes and reported by `get_cluster_status`
 and `check_connection`.
 
-Twelve of the server's 81 tools call endpoints that exist only in Enterprise. On
+Twelve of the server's 85 tools call endpoints that exist only in Enterprise. On
 a cluster identified as Community Edition they are **not registered at all**, so
 the model never sees a tool it cannot use. On Enterprise, or when the probe is
 inconclusive, they are offered.
@@ -152,6 +152,14 @@ editions, and simply does more where it is licensed:
   Enterprise. Everything else on that tool works on either edition.
 - **Namespace quota attachment.** `read_namespace` reports a namespace's quota
   on either edition; only Enterprise has quotas to report.
+- **Autopilot.** All three Autopilot tools work on either edition.
+  `set_autopilot_config` accepts `enable_redundancy_zones`,
+  `disable_upgrade_migration` and `enable_custom_upgrades`, which are
+  Enterprise-only; on Community Edition `get_autopilot_config` reads them as
+  their defaults. `get_autopilot_health` omits the Enterprise-only
+  `redundancy_zones`, `upgrade` and `optimistic_failure_tolerance` fields
+  entirely rather than reporting them empty — an optimistic failure tolerance of
+  `0` would read as an alarm on a cluster that simply lacks the feature.
 
 ## Deliberately absent
 

@@ -361,3 +361,103 @@ func priorityOf(t *testing.T, job map[string]any) int {
 	// example jobspec leaves it at.
 	return 50
 }
+
+// The Autopilot endpoints are read-only here, so what these prove is the part a
+// fake cannot: that the paths exist on a real agent and that the duration
+// fields — which Nomad sends as strings and the API decodes into time.Duration
+// — survive the round trip into the projection.
+func TestAutopilotConfigAgainstARealAgent(t *testing.T) {
+	c := newClient(t)
+
+	out := c.tool("get_autopilot_config", nil)
+
+	for _, field := range []string{
+		"cleanup_dead_servers", "last_contact_threshold",
+		"max_trailing_logs", "server_stabilization_time",
+	} {
+		if _, ok := out[field]; !ok {
+			t.Errorf("get_autopilot_config omitted %q: %s", field, mustJSON(t, out))
+		}
+	}
+
+	// A duration that decoded wrongly shows up here as "0s" or as a bare
+	// nanosecond count, both of which are useless to a reader.
+	threshold, _ := out["last_contact_threshold"].(string)
+	if threshold == "" || threshold == "0s" {
+		t.Errorf("last_contact_threshold should be a real duration string, got %q", threshold)
+	}
+	if strings.ContainsAny(threshold, "0123456789") && !strings.ContainsAny(threshold, "smh") {
+		t.Errorf("last_contact_threshold looks like a raw number, not a duration: %q", threshold)
+	}
+}
+
+func TestAutopilotHealthAgainstARealAgent(t *testing.T) {
+	c := newClient(t)
+
+	out := c.tool("get_autopilot_health", nil)
+
+	servers, ok := out["servers"].([]any)
+	if !ok || len(servers) == 0 {
+		t.Fatalf("get_autopilot_health returned no servers: %s", mustJSON(t, out))
+	}
+
+	server, _ := servers[0].(map[string]any)
+	if name, _ := server["name"].(string); name == "" {
+		t.Errorf("the server entry has no name: %s", mustJSON(t, out))
+	}
+	if leader, _ := server["leader"].(bool); !leader {
+		t.Errorf("the single dev-agent server should be the leader: %s", mustJSON(t, out))
+	}
+
+	// `nomad agent -dev` is one server, so it tolerates no loss. The warning
+	// for that is the tool's main finding and must fire against a real agent.
+	if degraded, _ := out["degraded"].(bool); !degraded {
+		t.Errorf("a single-server cluster should be reported as degraded: %s", mustJSON(t, out))
+	}
+}
+
+// The round trip is what a fake cannot prove: that Nomad accepts the document
+// this tool sends, including the duration fields it serialises as strings, and
+// that the compare-and-set index is one Nomad honours.
+func TestAutopilotConfigRoundTripsAgainstARealAgent(t *testing.T) {
+	c := newClient(t, "NOMAD_MCP_READ_ONLY=false")
+
+	before := c.tool("get_autopilot_config", nil)
+	wasThreshold, _ := before["last_contact_threshold"].(string)
+
+	changed := c.tool("set_autopilot_config", map[string]any{"last_contact_threshold": "1s"})
+	if ok, _ := changed["changed"].(bool); !ok {
+		t.Fatalf("the change was not applied: %s", mustJSON(t, changed))
+	}
+
+	after := c.tool("get_autopilot_config", nil)
+	if now, _ := after["last_contact_threshold"].(string); now != "1s" {
+		t.Errorf("last_contact_threshold should now be 1s, got %q", now)
+	}
+
+	// Restore, then confirm the settings never mentioned survived. The API
+	// replaces the whole document, so this is the property that breaks quietly.
+	c.tool("set_autopilot_config", map[string]any{"last_contact_threshold": wasThreshold})
+
+	restored := c.tool("get_autopilot_config", nil)
+	for _, field := range []string{
+		"last_contact_threshold", "server_stabilization_time",
+		"max_trailing_logs", "min_quorum", "cleanup_dead_servers",
+	} {
+		if restored[field] != before[field] {
+			t.Errorf("%s changed from %v to %v across a round trip that never mentioned it",
+				field, before[field], restored[field])
+		}
+	}
+}
+
+// A bare number cannot be resolved into units, so it must be refused here
+// rather than sent to Nomad to be interpreted as nanoseconds.
+func TestSetAutopilotConfigRejectsABareNumberAgainstARealAgent(t *testing.T) {
+	c := newClient(t, "NOMAD_MCP_READ_ONLY=false")
+
+	msg := c.toolFails("set_autopilot_config", map[string]any{"last_contact_threshold": "30"})
+	if !strings.Contains(msg, "duration string") {
+		t.Errorf("the refusal should explain the expected form; got:\n%s", msg)
+	}
+}

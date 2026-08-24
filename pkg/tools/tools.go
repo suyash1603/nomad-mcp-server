@@ -47,6 +47,8 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		system.ReadNodePool(p),
 		system.GetAgentConfig(p),
 		system.GetSchedulerConfig(p),
+		system.GetAutopilotConfig(p),
+		system.GetAutopilotHealth(p),
 		system.CheckConnection(p),
 		system.Search(p),
 
@@ -58,6 +60,7 @@ func Catalog(p *client.Provider) []server.ServerTool {
 		system.CreateNodePool(p),
 		system.DeleteNodePool(p),
 		system.SetSchedulerConfig(p),
+		system.SetAutopilotConfig(p),
 
 		// Jobs (read).
 		jobs.ListJobs(p),

@@ -32,6 +32,7 @@ With a sufficiently privileged token, this server can read and return to a model
 | Nomad Variables | `read_variable` | **Your secret store.** Off by default |
 | Node attributes | `read_node` | An allowlist, not the full fingerprint |
 | Agent configuration | `get_agent_config` | An allowlist. Never TLS paths or integration blocks |
+| Server names and addresses | `get_cluster_status`, `get_autopilot_health` | The Raft peer set: server names, advertised addresses and versions |
 
 Two of those are projections rather than passthroughs, and it matters:
 

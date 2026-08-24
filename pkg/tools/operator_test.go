@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/nomad/api"
 	"github.com/stretchr/testify/require"
@@ -576,6 +577,23 @@ func stringsOf(t *testing.T, v any) []string {
 	return out
 }
 
+// objectsOf reads an array of objects held under a key other than "items",
+// which is what the non-list projections use.
+func objectsOf(t *testing.T, v any) []map[string]any {
+	t.Helper()
+
+	raw, ok := v.([]any)
+	require.True(t, ok, "expected an array, got %v", v)
+
+	out := make([]map[string]any, 0, len(raw))
+	for _, r := range raw {
+		m, ok := r.(map[string]any)
+		require.True(t, ok, "expected an object in the array, got %v", r)
+		out = append(out, m)
+	}
+	return out
+}
+
 func checksOf(t *testing.T, report map[string]any) []map[string]string {
 	t.Helper()
 
@@ -596,4 +614,311 @@ func checksOf(t *testing.T, report map[string]any) []map[string]string {
 		out = append(out, flat)
 	}
 	return out
+}
+
+// --- autopilot ---------------------------------------------------------------
+
+func TestGetAutopilotConfigRendersDurationsReadably(t *testing.T) {
+	h := newHarness(t)
+
+	out := h.ok("get_autopilot_config", nil)
+
+	require.Equal(t, true, out["cleanup_dead_servers"])
+	require.Equal(t, "200ms", out["last_contact_threshold"],
+		"durations must be the form Nomad's own configuration uses, not nanoseconds")
+	require.Equal(t, "10s", out["server_stabilization_time"])
+	require.EqualValues(t, 250, out["max_trailing_logs"])
+}
+
+// cleanup_dead_servers = false is the setting behind a cluster that lost quorum
+// after a rolling replacement, so the tool has to name that symptom rather than
+// just report the flag.
+func TestGetAutopilotConfigWarnsWhenDeadServersAreNeverPruned(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers:      false,
+		LastContactThreshold:    200 * time.Millisecond,
+		ServerStabilizationTime: 10 * time.Second,
+	})
+
+	warnings := strings.Join(stringsOf(t, h.ok("get_autopilot_config", nil)["warnings"]), " ")
+	require.Contains(t, warnings, "cleanup_dead_servers is OFF")
+	require.Contains(t, warnings, "quorum")
+	require.Contains(t, warnings, "min_quorum is 0",
+		"a zero floor on pruning is its own finding")
+}
+
+func TestGetAutopilotConfigExplainsALongStabilizationTime(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers:      true,
+		MinQuorum:               3,
+		ServerStabilizationTime: 30 * time.Minute,
+	})
+
+	warnings := strings.Join(stringsOf(t, h.ok("get_autopilot_config", nil)["warnings"]), " ")
+	require.Contains(t, warnings, "30m0s")
+	require.Contains(t, warnings, "NON-VOTER",
+		"the warning must explain the symptom, not restate the setting")
+}
+
+func TestGetAutopilotHealthSummarisesTheFleet(t *testing.T) {
+	h := newHarness(t)
+
+	out := h.ok("get_autopilot_health", nil)
+
+	require.Equal(t, true, out["healthy"])
+	require.EqualValues(t, 1, out["server_count"])
+	require.EqualValues(t, 1, out["voter_count"])
+
+	servers := objectsOf(t, out["servers"])
+	require.Len(t, servers, 1)
+	require.Equal(t, "server-1.global", servers[0]["name"])
+	require.Equal(t, true, servers[0]["voter"])
+	require.Equal(t, true, servers[0]["leader"])
+
+	// A single-server cluster tolerates no loss at all, and saying so is the
+	// point of the tool even when every server is currently healthy.
+	require.Equal(t, true, out["degraded"])
+	warnings := strings.Join(stringsOf(t, out["warnings"]), " ")
+	require.Contains(t, warnings, "failure_tolerance is 0")
+}
+
+func TestGetAutopilotHealthNamesUnhealthyServersAndTheThresholdsBehindThem(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.JSON("/v1/operator/autopilot/health", &api.OperatorHealthReply{
+		Healthy:          false,
+		FailureTolerance: 1,
+		Leader:           nomadtest.ServerID,
+		Servers: []api.ServerHealth{
+			{Name: "server-1", Healthy: true, Voter: true, Leader: true, Version: "1.9.0"},
+			{Name: "server-2", Healthy: true, Voter: true, Version: "1.9.0"},
+			{Name: "server-3", Healthy: false, Voter: true, Version: "1.9.0",
+				SerfStatus: "failed", LastContact: 45 * time.Second},
+		},
+	})
+
+	out := h.ok("get_autopilot_health", nil)
+	require.Equal(t, true, out["degraded"])
+
+	warnings := strings.Join(stringsOf(t, out["warnings"]), " ")
+	require.Contains(t, warnings, "server-3", "the unhealthy server must be named")
+	require.NotContains(t, warnings, "server-2", "healthy voters are not a finding")
+	require.Contains(t, warnings, "last_contact_threshold",
+		"the warning must point at the setting that produced the verdict")
+
+	servers := objectsOf(t, out["servers"])
+	require.Len(t, servers, 3)
+	require.Equal(t, "45s", servers[2]["last_contact"])
+}
+
+// Healthy but not voting is the "why is my new server not counting toward
+// quorum?" case, and is a different finding from unhealthy.
+func TestGetAutopilotHealthDistinguishesStabilisingFromUnhealthy(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.JSON("/v1/operator/autopilot/health", &api.OperatorHealthReply{
+		Healthy:          true,
+		FailureTolerance: 1,
+		Leader:           nomadtest.ServerID,
+		Servers: []api.ServerHealth{
+			{Name: "server-1", Healthy: true, Voter: true, Leader: true},
+			{Name: "server-2", Healthy: true, Voter: true},
+			{Name: "server-3", Healthy: true, Voter: true},
+			{Name: "server-4", Healthy: true, Voter: false},
+		},
+	})
+
+	out := h.ok("get_autopilot_health", nil)
+	require.EqualValues(t, 4, out["server_count"])
+	require.EqualValues(t, 3, out["voter_count"])
+	require.Equal(t, false, out["degraded"],
+		"a server still stabilising is not a degraded cluster")
+
+	warnings := strings.Join(stringsOf(t, out["warnings"]), " ")
+	require.Contains(t, warnings, "server-4")
+	require.Contains(t, warnings, "server_stabilization_time")
+	require.NotContains(t, warnings, "UNHEALTHY")
+}
+
+func TestGetAutopilotHealthFlagsAMixedVersionFleet(t *testing.T) {
+	h := newHarness(t)
+	h.nomad.JSON("/v1/operator/autopilot/health", &api.OperatorHealthReply{
+		Healthy:          true,
+		FailureTolerance: 1,
+		Leader:           nomadtest.ServerID,
+		Servers: []api.ServerHealth{
+			{Name: "server-1", Healthy: true, Voter: true, Leader: true, Version: "1.9.0"},
+			{Name: "server-2", Healthy: true, Voter: true, Version: "1.9.0"},
+			{Name: "server-3", Healthy: true, Voter: true, Version: "1.10.1"},
+		},
+	})
+
+	out := h.ok("get_autopilot_health", nil)
+	require.Equal(t, []string{"1.10.1", "1.9.0"}, stringsOf(t, out["versions"]))
+
+	warnings := strings.Join(stringsOf(t, out["warnings"]), " ")
+	require.Contains(t, warnings, "rolling upgrade")
+}
+
+// Community Edition reports no optimistic tolerance, and emitting a bare 0
+// there would read as an alarm rather than an absent Enterprise field.
+func TestGetAutopilotHealthOmitsEnterpriseOnlyFieldsOnCommunity(t *testing.T) {
+	h := newHarness(t)
+
+	out := h.ok("get_autopilot_health", nil)
+
+	require.NotContains(t, out, "optimistic_failure_tolerance")
+	require.NotContains(t, out, "redundancy_zones")
+	require.NotContains(t, out, "upgrade")
+}
+
+// autopilotAccepts makes the fake answer the CAS write, and reports what the
+// caller sent. `ok` is what Nomad's compare-and-set returns: false means the
+// modify index did not match.
+func autopilotAccepts(h *harness, ok bool) {
+	body := "false"
+	if ok {
+		body = "true"
+	}
+	h.nomad.Handle("PUT /v1/operator/autopilot/configuration",
+		func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(body))
+		})
+}
+
+// The API replaces the whole document, so an omitted argument must be carried
+// through from the current state. Getting this wrong here resets the settings
+// that decide who stays in the Raft peer set.
+func TestSetAutopilotConfigPreservesSettingsItWasNotAskedToChange(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers:      true,
+		LastContactThreshold:    750 * time.Millisecond,
+		MaxTrailingLogs:         1000,
+		MinQuorum:               3,
+		ServerStabilizationTime: 42 * time.Second,
+		ModifyIndex:             11,
+	})
+	autopilotAccepts(h, true)
+
+	out := h.ok("set_autopilot_config", map[string]any{"max_trailing_logs": 500})
+	require.Equal(t, true, out["changed"])
+
+	body := h.nomad.Last("/v1/operator/autopilot/configuration").Body
+	require.Contains(t, body, `"MaxTrailingLogs":500`)
+	require.Contains(t, body, `"LastContactThreshold":"750ms"`,
+		"an unmentioned duration must keep its value")
+	require.Contains(t, body, `"ServerStabilizationTime":"42s"`)
+	require.Contains(t, body, `"MinQuorum":3`)
+	require.Contains(t, body, `"CleanupDeadServers":true`)
+}
+
+// The compare-and-set index is what stops this call overwriting a change
+// another operator made between the read and the write.
+func TestSetAutopilotConfigSendsTheModifyIndexAsACAS(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers: true,
+		ModifyIndex:        17,
+	})
+	autopilotAccepts(h, true)
+
+	h.ok("set_autopilot_config", map[string]any{"min_quorum": 5})
+
+	require.Equal(t, "17", h.nomad.Last("/v1/operator/autopilot/configuration").Query.Get("cas"),
+		"the write must be conditional on the index it read")
+}
+
+func TestSetAutopilotConfigRefusesWhenTheConfigChangedUnderneathIt(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers: true,
+		ModifyIndex:        3,
+	})
+	autopilotAccepts(h, false)
+
+	msg := h.fails("set_autopilot_config", map[string]any{"min_quorum": 5})
+	require.Contains(t, msg, "NOT updated")
+	require.Contains(t, msg, "changed underneath")
+	require.Contains(t, msg, "get_autopilot_config")
+}
+
+func TestSetAutopilotConfigReportsANoOp(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers: true,
+		MinQuorum:          3,
+	})
+
+	out := h.ok("set_autopilot_config", map[string]any{
+		"cleanup_dead_servers": true,
+		"min_quorum":           3,
+	})
+	require.Equal(t, false, out["changed"])
+	for _, req := range h.nomad.Requests() {
+		require.NotEqual(t, http.MethodPut, req.Method,
+			"a no-op must not write the configuration back")
+	}
+}
+
+func TestSetAutopilotConfigParsesDurationsAndRejectsBareNumbers(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		LastContactThreshold:    200 * time.Millisecond,
+		ServerStabilizationTime: 10 * time.Second,
+	})
+	autopilotAccepts(h, true)
+
+	out := h.ok("set_autopilot_config", map[string]any{"last_contact_threshold": "2s"})
+	changes, ok := out["changes"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "200ms -> 2s", changes["last_contact_threshold"],
+		"the change list should show both sides in the form Nomad uses")
+	require.Contains(t, h.nomad.Last("/v1/operator/autopilot/configuration").Body,
+		`"LastContactThreshold":"2s"`)
+
+	// A bare number is the mistake a model makes here, and the units it meant
+	// are unknowable, so it must be refused rather than guessed at.
+	msg := h.fails("set_autopilot_config", map[string]any{"server_stabilization_time": "30"})
+	require.Contains(t, msg, "duration string")
+	require.Contains(t, msg, "server_stabilization_time")
+}
+
+func TestSetAutopilotConfigRejectsThresholdsThatWouldFailEveryServer(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		LastContactThreshold: 200 * time.Millisecond,
+		MaxTrailingLogs:      250,
+	})
+
+	msg := h.fails("set_autopilot_config", map[string]any{"last_contact_threshold": "0s"})
+	require.Contains(t, msg, "greater than zero")
+	require.Contains(t, msg, "unhealthy")
+
+	msg = h.fails("set_autopilot_config", map[string]any{"max_trailing_logs": 0})
+	require.Contains(t, msg, "greater than zero")
+
+	for _, req := range h.nomad.Requests() {
+		require.NotEqual(t, http.MethodPut, req.Method,
+			"a rejected value must never reach Nomad")
+	}
+}
+
+// Turning cleanup on hands Autopilot permission to evict Raft peers, which is
+// the consequence the caller most needs told back to them.
+func TestSetAutopilotConfigWarnsWhenItEnablesPeerRemoval(t *testing.T) {
+	h := newHarness(t, func(c *config.Config) { c.ReadOnly = false })
+	h.nomad.JSON("/v1/operator/autopilot/configuration", &api.AutopilotConfiguration{
+		CleanupDeadServers: false,
+		MinQuorum:          3,
+	})
+	autopilotAccepts(h, true)
+
+	out := h.ok("set_autopilot_config", map[string]any{"cleanup_dead_servers": true})
+
+	warnings := strings.Join(stringsOf(t, out["warnings"]), " ")
+	require.Contains(t, warnings, "cleanup_dead_servers is now ON")
+	require.Contains(t, warnings, "Raft peer set")
+	require.Contains(t, warnings, "min_quorum = 3",
+		"the floor that limits the pruning should be stated alongside it")
 }
