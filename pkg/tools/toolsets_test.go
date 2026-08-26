@@ -147,6 +147,22 @@ func TestToolsetFlagUsageListsEveryToolset(t *testing.T) {
 	}
 }
 
+// TestToolsetSelectionTreatsDefaultAsUnrestricted is the check behind the
+// startup log. The default value is the non-empty "all", so a naive
+// len(toolsets) > 0 reports every server as restricted — telling an operator
+// debugging a missing tool the exact opposite of the truth.
+func TestToolsetSelectionTreatsDefaultAsUnrestricted(t *testing.T) {
+	require.Nil(t, toolsetSelection(nil))
+	require.Nil(t, toolsetSelection([]string{}))
+	require.Nil(t, toolsetSelection([]string{ToolsetAll}),
+		"the default must not read as a restriction")
+	require.Nil(t, toolsetSelection([]string{config.DefaultToolsets}))
+	require.Nil(t, toolsetSelection([]string{ToolsetJobs, ToolsetAll}),
+		"an explicit all alongside other names still means all")
+
+	require.NotNil(t, toolsetSelection([]string{ToolsetJobs}))
+}
+
 // TestToolsetAllMatchesConfig pins the two spellings of "all" together.
 // pkg/config needs the value for its own default and cannot import this
 // package, so the constant exists in both places; this is what stops them

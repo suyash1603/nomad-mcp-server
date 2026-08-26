@@ -125,7 +125,11 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []ser
 	// narrowed the toolsets wants confirmation it took effect, and anyone
 	// debugging "why can the model not see list_jobs" should find the answer in
 	// the startup output rather than by reading the configuration back.
-	if len(toolsets) > 0 {
+	//
+	// The test is the resolved selection, not whether the setting was written:
+	// the default is the non-empty "all", and logging that as a restriction
+	// would tell the operator the opposite of the truth.
+	if toolsetSelection(toolsets) != nil {
 		p.Logger().WithField("toolsets", strings.Join(toolsets, ",")).
 			Info("tool catalog restricted to the configured toolsets")
 	}
