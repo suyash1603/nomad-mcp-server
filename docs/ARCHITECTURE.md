@@ -63,11 +63,11 @@ beats an environment variable, for every setting.
 
 ## `version/`
 
-**`version/VERSION`** holds `0.1.0-dev`, and nothing else. It is a plain file so
+**`version/VERSION`** holds `1.0.0-dev`, and nothing else. It is a plain file so
 that a release process can bump the version without touching Go source.
 
 **`version/version.go`** embeds that file with `//go:embed` and splits it on the
-first `-` into `Version` (`0.1.0`) and `VersionPrerelease` (`dev`). A trailing
+first `-` into `Version` (`1.0.0`) and `VersionPrerelease` (`dev`). A trailing
 prerelease marker means "not a final release".
 
 `GitCommit` and `BuildDate` are declared empty and filled in **by the linker** —

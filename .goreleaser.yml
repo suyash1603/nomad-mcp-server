@@ -90,4 +90,5 @@ release:
     See [docs/QUICKSTART.md](https://github.com/suyash1603/nomad-mcp-server/blob/main/docs/QUICKSTART.md)
     to try it in ten minutes.
 
-    **Beta.** Tool names, output shapes and defaults may change before 1.0.
+    Tool names, arguments and output shapes follow semantic versioning from
+    this release on.

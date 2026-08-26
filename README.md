@@ -29,12 +29,9 @@ who has deployed that one already knows how to deploy this.
 
 ---
 
-## ⚠️ Beta, and what it can see
+## ⚠️ What it can see
 
-**This is beta software.** The tool names, output shapes and defaults may change
-before 1.0.
-
-More importantly, be clear about what you are connecting an AI model to. With a
+Be clear about what you are connecting an AI model to. With a
 sufficiently privileged token this server can read:
 
 - **Job specifications** — including task environment variable *names*, command
