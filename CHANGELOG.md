@@ -8,6 +8,71 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
+## [1.0.1] — 2026-08-26
+
+Groundwork for running against large clusters. No tool was removed, renamed or
+changed shape, and a server started with no new configuration behaves exactly
+as 1.0.0 did.
+
+### Added
+
+#### Toolsets
+
+`NOMAD_MCP_TOOLSETS` selects which groups of tools the server offers. The
+default is `all`, which is the whole catalog as before.
+
+```bash
+NOMAD_MCP_TOOLSETS=jobs,allocs,deployments nomad-mcp-server stdio
+```
+
+| Toolset | Covers |
+|---|---|
+| `system` | Cluster status, regions, node pools, agent and scheduler config, Raft, Autopilot, search |
+| `jobs` | Job specifications, versions, planning and submission |
+| `allocs` | Allocations, task logs, allocation files, resource statistics |
+| `nodes` | Client nodes, draining, eligibility |
+| `deployments` | Deployments and scheduler evaluations |
+| `catalog` | Namespaces, service registrations, storage volumes |
+| `variables` | Nomad Variables |
+| `diag` | hcdiag support-bundle collection |
+| `enterprise` | Licence, quotas, Sentinel, Dynamic Application Sizing |
+
+This exists for two reasons. Eighty-eight tool definitions are sent to the model
+on every request, which is a real and growing cost; and a toolset that is never
+registered is a scoping control in its own right — a server without the
+`variables` toolset cannot read a Variable whatever its token permits.
+
+An unknown toolset name is refused at startup, with the valid names in the
+error. A server that came up quietly missing a third of its tools would be
+indistinguishable, from the model's side, from one that never had them.
+
+#### Filtering for large clusters
+
+- `list_job_allocations` and `list_node_allocations` accept `status`, one or
+  several of `pending`, `running`, `complete`, `failed`, `lost`, `unknown`.
+  Neither endpoint paginates, so a job with hundreds of allocations previously
+  returned all of them. `status="failed,lost"` is the common case.
+- `list_services` accepts `prefix` and `filter`, matching the other paginated
+  list tools.
+- `list_volumes` accepts `node_id` and `plugin_id`, applied by the Nomad servers
+  rather than here.
+
+An empty result now says whether a filter caused it. "Nothing is failing" and
+"your filter excluded everything" call for opposite next steps.
+
+### Internal
+
+A bounded fan-out helper (`utils.FanOut`) for tools that visit many
+allocations or nodes in one call: a concurrency cap so a diagnostic does not
+become a denial of service on the cluster it is diagnosing, a target cap, a
+wall-clock budget, deterministic output order, and deduplicated errors. It
+reports what it did *not* reach as prominently as what it found, so a sampled
+scan cannot be read as an exhaustive one.
+
+Nothing calls it yet. It ships now because the investigation tools that use it
+land next, and they should all inherit the same limits rather than each
+growing their own.
+
 ## [1.0.0] — 2026-08-26
 
 First public release.
