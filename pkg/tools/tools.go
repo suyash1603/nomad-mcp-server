@@ -5,25 +5,19 @@
 //
 // Each domain lives in its own subpackage (system, jobs, allocs, ...) with one
 // file per tool group, and each tool constructor returns a server.ServerTool.
-// Catalog is the single place that decides what the server exposes.
+// Those constructors are grouped into named toolsets in toolsets.go, which is
+// the single place that decides what the server exposes; everything here
+// derives from it.
 package tools
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/allocs"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/catalog"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/diag"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/enterprise"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/jobs"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/nodes"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/scheduler"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/system"
-	"github.com/suyash1603/nomad-mcp-server/pkg/tools/variables"
 	"github.com/suyash1603/nomad-mcp-server/pkg/utils"
 )
 
@@ -32,156 +26,43 @@ import (
 // expecting an initialize response.
 const editionProbeTimeout = 5 * time.Second
 
-// Catalog returns every tool the server exposes.
+// Catalog returns every tool the server exposes, from every toolset.
 //
 // It is exported and separate from InitTools so that tests can inspect the
 // catalog directly — checking that each tool is annotated, that every mutating
 // tool is refused in read-only mode, and that descriptions exist — without
-// standing up an MCP server and driving it over a transport.
+// standing up an MCP server and driving it over a transport. It ignores both
+// filters, so tests see every tool regardless of how any given server is
+// configured or what edition any cluster happens to run.
 func Catalog(p *client.Provider) []server.ServerTool {
-	return []server.ServerTool{
-		// System and cluster (read).
-		system.GetClusterStatus(p),
-		system.ListRegions(p),
-		system.ListNodePools(p),
-		system.ReadNodePool(p),
-		system.GetAgentConfig(p),
-		system.GetSchedulerConfig(p),
-		system.GetAutopilotConfig(p),
-		system.GetAutopilotHealth(p),
-		system.GetRaftConfig(p),
-		system.CheckConnection(p),
-		system.Search(p),
-
-		// Diagnostics. The only tool that runs a local binary, and the only
-		// one with its own enable switch; see pkg/tools/diag.
-		diag.CollectHCDiag(p),
-
-		// System and cluster (write).
-		system.CreateNodePool(p),
-		system.DeleteNodePool(p),
-		system.SetSchedulerConfig(p),
-		system.SetAutopilotConfig(p),
-		system.RemoveRaftPeer(p),
-		system.TransferLeadership(p),
-
-		// Jobs (read).
-		jobs.ListJobs(p),
-		jobs.ReadJob(p),
-		jobs.ReadJobSummary(p),
-		jobs.ListJobVersions(p),
-		jobs.ListJobAllocations(p),
-		jobs.ListJobDeployments(p),
-		jobs.ListJobEvaluations(p),
-		jobs.GetJobScaleStatus(p),
-		jobs.ParseJobHCL(p),
-		jobs.ValidateJob(p),
-		jobs.PlanJob(p),
-
-		// Jobs (write).
-		jobs.RunJob(p),
-		jobs.EditJob(p),
-		jobs.StopJob(p),
-		jobs.ScaleTaskGroup(p),
-		jobs.RevertJobVersion(p),
-		jobs.DispatchParameterizedJob(p),
-		jobs.ForcePeriodicJob(p),
-
-		// Allocations (read).
-		allocs.ListAllocations(p),
-		allocs.ReadAllocation(p),
-		allocs.ReadAllocationLogs(p),
-		allocs.ListAllocationFiles(p),
-		allocs.ReadAllocationFile(p),
-		allocs.GetAllocationStats(p),
-
-		// Allocations (write).
-		allocs.RestartAllocation(p),
-		allocs.StopAllocation(p),
-		allocs.SignalAllocation(p),
-
-		// Nodes (read).
-		nodes.ListNodes(p),
-		nodes.ReadNode(p),
-		nodes.ListNodeAllocations(p),
-		nodes.GetNodeStats(p),
-
-		// Nodes (write).
-		nodes.DrainNode(p),
-		nodes.SetNodeEligibility(p),
-		nodes.RestartNodeAllocations(p),
-		nodes.ForceEvaluateNode(p),
-		nodes.SetNodeMeta(p),
-		nodes.PurgeNode(p),
-
-		// Deployments and evaluations (read).
-		scheduler.ListDeployments(p),
-		scheduler.ReadDeployment(p),
-		scheduler.ListEvaluations(p),
-		scheduler.ReadEvaluation(p),
-
-		// Deployments (write).
-		scheduler.PromoteDeployment(p),
-		scheduler.FailDeployment(p),
-		scheduler.PauseDeployment(p),
-		scheduler.UnblockDeployment(p),
-		scheduler.SetDeploymentAllocHealth(p),
-
-		// Namespaces, services and volumes (read).
-		catalog.ListNamespaces(p),
-		catalog.ReadNamespace(p),
-		catalog.ListServices(p),
-		catalog.ReadService(p),
-		catalog.ListVolumes(p),
-		catalog.ReadVolume(p),
-
-		// Namespaces (write).
-		catalog.CreateNamespace(p),
-		catalog.DeleteNamespace(p),
-
-		// Variables (read).
-		variables.ListVariables(p),
-		variables.ReadVariable(p),
-
-		// Variables (write).
-		variables.WriteVariable(p),
-		variables.DeleteVariable(p),
-
-		// Enterprise only. These are registered like any other tool and then
-		// filtered by CatalogFor when the cluster is known to be Community
-		// Edition; see utils.EnterpriseTool.
-		enterprise.GetLicense(p),
-		enterprise.ListQuotas(p),
-		enterprise.ReadQuota(p),
-		enterprise.CreateQuota(p),
-		enterprise.DeleteQuota(p),
-		enterprise.ListSentinelPolicies(p),
-		enterprise.ReadSentinelPolicy(p),
-		enterprise.WriteSentinelPolicy(p),
-		enterprise.DeleteSentinelPolicy(p),
-		enterprise.ListRecommendations(p),
-		enterprise.ApplyRecommendations(p),
-		enterprise.DismissRecommendations(p),
+	var out []server.ServerTool
+	for _, ts := range Toolsets(p) {
+		out = append(out, ts.Tools...)
 	}
+	return out
 }
 
-// CatalogFor returns the tools to register against a particular cluster.
+// CatalogFor returns the tools to register for one particular server.
 //
-// It is Catalog minus the Enterprise-only tools when includeEnterprise is
-// false. Catalog itself always returns everything, so tests can inspect every
-// tool regardless of what any cluster happens to be.
-func CatalogFor(p *client.Provider, includeEnterprise bool) []server.ServerTool {
-	all := Catalog(p)
-	if includeEnterprise {
-		return all
-	}
+// Two filters apply, and they are independent. The toolset filter is the
+// operator's choice about what this server should offer at all; an empty or nil
+// toolsets slice means every one of them. The edition filter drops the
+// Enterprise-only tools when the cluster is known to be Community Edition, so
+// the model is not offered tools that can only fail.
+func CatalogFor(p *client.Provider, includeEnterprise bool, toolsets []string) []server.ServerTool {
+	selected := toolsetSelection(toolsets)
 
-	out := make([]server.ServerTool, 0, len(all))
-	for _, t := range all {
-		if utils.IsEnterpriseTool(t.Tool) {
+	var out []server.ServerTool
+	for _, ts := range Toolsets(p) {
+		if selected != nil && !selected[ts.Name] {
 			continue
 		}
-		out = append(out, t)
+		for _, t := range ts.Tools {
+			if !includeEnterprise && utils.IsEnterpriseTool(t.Tool) {
+				continue
+			}
+			out = append(out, t)
+		}
 	}
 	return out
 }
@@ -222,6 +103,9 @@ func includeEnterpriseTools(ctx context.Context, p *client.Provider) (bool, stri
 // handlers: a resource read is the same view as the equivalent tool call, and
 // passing the registered catalog along is what guarantees that rather than
 // merely intending it.
+//
+// What gets registered is CatalogFor's decision: the operator's toolset
+// selection, then the cluster's edition.
 func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []server.ServerTool {
 	// The probe needs a context and a bounded wait: registration happens at
 	// startup, and a cluster that is slow or absent must not hold the server
@@ -230,11 +114,21 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []ser
 	defer cancel()
 
 	includeEnterprise, why := includeEnterpriseTools(ctx, p)
-	tools := CatalogFor(p, includeEnterprise)
+	toolsets := p.Config().Toolsets
+	tools := CatalogFor(p, includeEnterprise, toolsets)
 
 	p.Logger().WithField("enterprise_tools", includeEnterprise).
 		WithField("reason", why).
 		Debug("decided whether to offer the Enterprise-only tools")
+
+	// A restricted catalog is logged at info rather than debug. An operator who
+	// narrowed the toolsets wants confirmation it took effect, and anyone
+	// debugging "why can the model not see list_jobs" should find the answer in
+	// the startup output rather than by reading the configuration back.
+	if len(toolsets) > 0 {
+		p.Logger().WithField("toolsets", strings.Join(toolsets, ",")).
+			Info("tool catalog restricted to the configured toolsets")
+	}
 
 	for _, t := range tools {
 		// Classification is derived from the tool's own MCP read-only

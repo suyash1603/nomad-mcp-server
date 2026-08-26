@@ -68,6 +68,7 @@ const (
 	EnvHCDiagDest         = "NOMAD_MCP_HCDIAG_DEST"
 	EnvHCDiagTimeout      = "NOMAD_MCP_HCDIAG_TIMEOUT"
 	EnvEnterprise         = "NOMAD_MCP_ENTERPRISE"
+	EnvToolsets           = "NOMAD_MCP_TOOLSETS"
 	EnvLogFile            = "NOMAD_MCP_LOG_FILE"
 	EnvLogLevel           = "NOMAD_MCP_LOG_LEVEL"
 )
@@ -111,6 +112,17 @@ const (
 	// but it is bounded, because a wedged child process would otherwise hold a
 	// tool call open forever.
 	DefaultHCDiagTimeout = "10m"
+
+	// ToolsetAllValue is the toolsets value that selects every toolset. It is
+	// duplicated as tools.ToolsetAll, which is where the selection is actually
+	// applied; this copy exists so that config's own default can name it.
+	ToolsetAllValue = "all"
+
+	// DefaultToolsets is "all": offer every toolset. Narrowing this is how an
+	// operator both cuts the context a large catalog costs on every request and
+	// scopes what the server can reach at all — a server that never registered
+	// the variables toolset cannot read a Variable whatever its token allows.
+	DefaultToolsets = ToolsetAllValue
 
 	// DefaultEnterprise is "auto": probe the cluster once at startup and offer
 	// the Enterprise-only tools unless the cluster is known to be Community
@@ -199,6 +211,8 @@ var settings = []setting{
 		"Maximum time one hcdiag collection may run before it is killed"},
 	{"enterprise", EnvEnterprise, kindString, DefaultEnterprise, scopeRoot,
 		"Offer the Nomad Enterprise-only tools: auto (probe the cluster), true (always), or false (never)"},
+	{"toolsets", EnvToolsets, kindString, DefaultToolsets, scopeRoot,
+		ToolsetsFlagUsage()},
 
 	// --- Logging ----------------------------------------------------------
 	{"log-file", EnvLogFile, kindString, "", scopeRoot,
@@ -250,6 +264,7 @@ type Config struct {
 	MaxLogBytes        int64
 	AllowDestructive   bool
 	Enterprise         string
+	Toolsets           []string
 
 	// hcdiag. This is the only tool that runs a local binary, so it carries
 	// its own opt-in rather than riding on the read-only setting.
@@ -366,6 +381,7 @@ func Load() (*Config, error) {
 		HCDiagPath:         strings.TrimSpace(viper.GetString("hcdiag-path")),
 		HCDiagDest:         strings.TrimSpace(viper.GetString("hcdiag-dest")),
 		Enterprise:         strings.ToLower(strings.TrimSpace(viper.GetString("enterprise"))),
+		Toolsets:           splitList(strings.ToLower(viper.GetString("toolsets"))),
 
 		LogFile:  viper.GetString("log-file"),
 		LogLevel: viper.GetString("log-level"),
@@ -554,6 +570,20 @@ func (c *Config) EnterpriseNever() bool { return c.Enterprise == "false" }
 
 // EnterpriseAuto reports whether the decision is left to a cluster probe.
 func (c *Config) EnterpriseAuto() bool { return c.Enterprise == "auto" || c.Enterprise == "" }
+
+// ToolsetsFlagUsage is the help text for --toolsets.
+//
+// The names are written out here rather than read from pkg/tools because that
+// package already depends on this one, and the import cannot go both ways. A
+// test in pkg/tools asserts this string mentions every toolset that actually
+// exists, which is what stops the two drifting apart.
+func ToolsetsFlagUsage() string {
+	return "Comma-separated toolsets to offer: " +
+		"system, jobs, allocs, nodes, deployments, catalog, variables, diag, enterprise. " +
+		"Narrowing this cuts the context the catalog costs on every request, and limits " +
+		"what the server can reach at all. Default " + DefaultToolsets
+
+}
 
 // orDefault returns v, or def when v is empty after trimming.
 func orDefault(v, def string) string {

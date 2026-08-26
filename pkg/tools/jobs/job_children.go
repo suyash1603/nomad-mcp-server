@@ -74,6 +74,7 @@ func ListJobAllocations(p *client.Provider) server.ServerTool {
 						"Off by default, which shows only the current ones. Turn it on to investigate "+
 						"what happened before the most recent change."),
 			),
+			utils.AllocStatusParam(),
 		)...),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			jobID, namespace, q, err := jobArgs(ctx, req, p)
@@ -98,13 +99,29 @@ func ListJobAllocations(p *client.Provider) server.ServerTool {
 				}, p.Redactor()))
 			}
 
+			// Nomad's per-job allocation endpoint returns every allocation in
+			// one response, so the status filter is applied here. On a job with
+			// hundreds of allocations that is the difference between an answer
+			// and a context window full of healthy replicas.
+			wanted := utils.AllocStatusFilter(req)
 			items := make([]projection.AllocStub, 0, len(stubs))
+			var filtered int
 			for _, s := range stubs {
+				if s == nil {
+					continue
+				}
+				if wanted != nil && !wanted(s.ClientStatus) {
+					filtered++
+					continue
+				}
 				items = append(items, projection.Alloc(s))
 			}
 
 			result := utils.List{Count: len(items), Namespace: namespace, Items: items}
-			if len(items) == 0 {
+			switch {
+			case filtered > 0:
+				result.Note = utils.FilteredOutNote(len(items), filtered, req.GetString("status", ""))
+			case len(items) == 0:
 				result.Note = "This job has no allocations. Nothing has been placed for it. " +
 					"Run list_job_evaluations against this job: a blocked or failed evaluation will say why."
 			}

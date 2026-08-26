@@ -47,7 +47,8 @@ tool definitions and handlers; it does framing, dispatch, and schema.
 ```
 cmd/nomad-mcp-server/   the CLI: commands, flags, server bootstrap
 pkg/config/             every configuration knob, in one table
-pkg/tools/              the tool catalog, one package per domain
+pkg/tools/              the tool catalog, one package per domain, grouped into
+                        toolsets in toolsets.go
 pkg/utils/              shared helpers
 version/                version string, injected at build time
 docs/                   this file and its siblings
@@ -241,10 +242,39 @@ sink, one level.
 
 ---
 
-## `pkg/tools/tools.go` — the catalog
+## `pkg/tools/toolsets.go` and `tools.go` — the catalog
 
-`InitTools` is where the whole catalog is assembled. Two decisions are encoded
-in its doc comment, because they shape every domain package:
+`toolsetDefs` in `toolsets.go` is the single source of truth for what the server
+exposes: an ordered list of named groups, each with a `build` function returning
+its tools. `Catalog` flattens it, and `CatalogFor` applies the two filters.
+
+The tools sit behind a function rather than in a field so that `ToolsetNames`
+can read the names without constructing anything — validation needs the names at
+startup, and building the catalog needs a live `Provider`.
+
+Deriving the catalog from the groups, rather than keeping a group list beside a
+flat catalog, is what makes *every tool belongs to exactly one toolset* true by
+construction. There is nowhere else a tool could be registered from, and
+`TestEveryToolBelongsToExactlyOneToolset` asserts the two views agree on the
+count.
+
+`CatalogFor(p, includeEnterprise, toolsets)` applies two independent filters:
+
+- **Toolsets** — the operator's choice about what this server offers at all. Nil
+  or empty means every one of them, so the default behaves exactly as it did
+  before the setting existed.
+- **Edition** — drops the Enterprise-only tools against a cluster known to be
+  Community Edition, so the model is not offered tools that can only fail.
+
+An unknown toolset name is rejected in `setup()` rather than in
+`config.Validate`, because `pkg/config` cannot import `pkg/tools` — tools
+already depends on config through the client. The flag's help text therefore
+spells the names out by hand in `config.ToolsetsFlagUsage`, and
+`TestToolsetFlagUsageListsEveryToolset` over in `pkg/tools` is what stops the
+two drifting apart.
+
+Two further decisions are encoded in `InitTools`, because they shape every
+domain package:
 
 - **One subpackage per domain, one file per tool**, matching what
   `vault-mcp-server` actually does. One file per *domain* is the obvious split,
@@ -253,6 +283,10 @@ in its doc comment, because they shape every domain package:
   time. Hiding them would make `tools/list` lie about the server's shape, and the
   model would get "no such tool" — indistinguishable from a bug — instead of an
   explanation telling the operator which flag to flip.
+
+  Toolsets are the deliberate exception. A tool excluded by a toolset really is
+  absent, because there the operator's intent is "this server does not do that
+  at all" rather than "not right now".
 
 ---
 
@@ -400,6 +434,37 @@ only**, and actively **rejects** requests that put them in the query string:
 Both get a 400 rather than being ignored, so a client doing it finds out
 immediately. The rejection never echoes the offending value back.
 
+## `pkg/utils/fanout.go` — bounded fan-out
+
+`FanOut` applies a function to many targets — allocations, nodes — under three
+independent limits: a **concurrency cap** so a diagnostic does not become a
+denial of service on the cluster it is diagnosing, a **target cap** so a huge
+cluster cannot fill the model's context, and a **wall-clock budget** so a call
+returns even when forty nodes are unreachable.
+
+Three properties are worth knowing:
+
+- **Output follows input order**, not completion order. Results are written into
+  a slice indexed by target. A tool whose output reorders itself between
+  identical calls is much harder to reason about, for a person and for a model
+  comparing two runs.
+- **A failing target does not abort the fan-out.** On a large cluster some
+  fraction of nodes is always unreachable, and that must not cost the caller
+  every other answer. Errors are counted, deduplicated, ranked by frequency and
+  capped — three hundred copies of "connection refused" is how a tool meant to
+  save context exhausts it.
+- **What it did not reach is reported as prominently as what it found.**
+  `Sampled`, `TimedOut` and `Failed` are structured fields *and* a prose `Note`,
+  because a model reading a result with items in it tends to answer from the
+  items and skip the metadata. A sampled scan reported as exhaustive is the
+  failure mode this guards against — "nothing is failing" when sixty
+  allocations were never checked.
+
+Nothing calls it yet; the investigation tools that do land next, and they should
+all inherit one set of limits rather than each growing their own.
+
+---
+
 ## `pkg/utils/redact.go`
 
 Two strategies. **Pattern** redaction catches anything *labelled* as a secret,
@@ -475,15 +540,18 @@ either — it uses a package per domain. So: `pkg/tools/jobs/`, `pkg/tools/alloc
 `pkg/tools/system/`, `pkg/tools/variables/`, with roughly one file per tool
 inside each.
 
-`pkg/tools/tools.go` is the only file that knows the whole catalog:
+`pkg/tools/toolsets.go` is the only file that knows the whole catalog, and
+`tools.go` derives from it:
 
 ```go
+func Toolsets(p *client.Provider) []Toolset
 func Catalog(p *client.Provider) []server.ServerTool
+func CatalogFor(p *client.Provider, includeEnterprise bool, toolsets []string) []server.ServerTool
 func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []server.ServerTool
 ```
 
 `Catalog` is exported purely so the tests can walk every tool without starting a
-server. That is also what makes the catalog-wide invariants in
+server — it ignores both filters for exactly that reason. That is also what makes the catalog-wide invariants in
 `pkg/tools/tools_test.go` possible — every tool annotated, every name
 well-formed, every description long enough to be usable.
 

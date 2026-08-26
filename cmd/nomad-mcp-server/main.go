@@ -112,6 +112,15 @@ func setup() (*config.Config, *log.Logger, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// The toolset names are validated here rather than in config.Validate
+	// because pkg/config cannot import pkg/tools — tools already depends on
+	// config through the client. Checking at startup is what turns a typo into
+	// a refusal to start rather than a server that comes up missing tools.
+	if err := tools.ValidateToolsets(cfg.Toolsets); err != nil {
+		return nil, nil, fmt.Errorf("invalid %s: %w", config.EnvToolsets, err)
+	}
+
 	logger, err := initLogger(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -357,6 +366,9 @@ func logStartup(cfg *config.Config, logger *log.Logger) {
 	}
 	if len(cfg.AllowedNamespaces) > 0 {
 		fields["allowed_namespaces"] = strings.Join(cfg.AllowedNamespaces, ",")
+	}
+	if len(cfg.Toolsets) > 0 {
+		fields["toolsets"] = strings.Join(cfg.Toolsets, ",")
 	}
 	logger.WithFields(fields).Info("nomad-mcp-server starting")
 

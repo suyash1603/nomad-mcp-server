@@ -221,6 +221,34 @@ from a secret store is the worst thing this server could do.
 
 ---
 
+## Toolsets: not offering a capability at all
+
+`NOMAD_MCP_TOOLSETS` decides which groups of tools are registered. It defaults
+to `all`, and narrowing it is the bluntest scoping control here: a tool that was
+never registered cannot be called, cannot be refused-and-retried, and does not
+appear in `tools/list` for a model to reason about.
+
+It is weaker than the token and stronger than a runtime gate. Weaker, because it
+is enforced by this server rather than by Nomad — anything else holding the same
+token is unaffected. Stronger than a gate, because there is no handler to reach:
+`NOMAD_MCP_TOOLSETS=jobs,allocs` on a server whose token can read Variables
+still leaves no tool that reads one.
+
+Use it alongside the token, not instead of it. The layering that actually holds:
+
+1. **The ACL token** — the only limit Nomad enforces. Scope it.
+2. **Toolsets** — what this server offers at all.
+3. **Read-only and the destructive tier** — whether the mutating half of what is
+   offered may run.
+4. **The namespace allowlist** — checked before the request is sent.
+
+An unknown toolset name is refused at startup rather than ignored. Ignoring it
+would mean an operator who typoed `variable` for `variables` gets a server that
+silently offers more than they asked for, which is the wrong direction to fail
+in.
+
+---
+
 ## No ACL tools, deliberately
 
 There are no tools for creating, reading or writing ACL tokens or policies.

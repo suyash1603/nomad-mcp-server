@@ -361,3 +361,46 @@ func TestDestructiveIsAllowedByDefault(t *testing.T) {
 	require.True(t, DefaultAllowDestructive,
 		"turning off read-only must not leave destructive tools quietly blocked")
 }
+
+func TestToolsetsParsing(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"default is all", DefaultToolsets, []string{"all"}},
+		{"single", "jobs", []string{"jobs"}},
+		{"multiple", "jobs,nodes", []string{"jobs", "nodes"}},
+		{"whitespace trimmed", " jobs , nodes ", []string{"jobs", "nodes"}},
+		{"empty entries dropped", "jobs,,nodes,", []string{"jobs", "nodes"}},
+		{"lowercased", "Jobs,NODES", []string{"jobs", "nodes"}},
+		{"empty means all", "", nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := load(t, "--toolsets", tc.in)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, cfg.Toolsets)
+		})
+	}
+}
+
+// TestToolsetsFromEnvSplitsOnComma is the same trap AllowedNamespaces has: a
+// StringSlice bound to an environment variable would yield one toolset named
+// "jobs,nodes" and silently match nothing.
+func TestToolsetsFromEnvSplitsOnComma(t *testing.T) {
+	t.Setenv(EnvToolsets, "jobs,nodes")
+	cfg, err := load(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{"jobs", "nodes"}, cfg.Toolsets)
+}
+
+// TestToolsetsDefaultOffersEverything pins the compatibility promise: a server
+// started with no toolset configuration must offer the same catalog it did
+// before the setting existed.
+func TestToolsetsDefaultOffersEverything(t *testing.T) {
+	cfg, err := load(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{ToolsetAllValue}, cfg.Toolsets)
+}
