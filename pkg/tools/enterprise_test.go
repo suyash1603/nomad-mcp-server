@@ -54,7 +54,7 @@ func TestCommunityCatalogDropsOnlyTheEnterpriseTools(t *testing.T) {
 	p := testProvider(t, true)
 
 	full := Catalog(p)
-	community := CatalogFor(p, false)
+	community := CatalogFor(p, false, nil)
 
 	require.Len(t, community, len(full)-len(expectedEnterpriseTools))
 
@@ -79,7 +79,7 @@ func TestCommunityCatalogDropsOnlyTheEnterpriseTools(t *testing.T) {
 
 func TestEnterpriseCatalogKeepsEverything(t *testing.T) {
 	p := testProvider(t, true)
-	require.Len(t, CatalogFor(p, true), len(Catalog(p)))
+	require.Len(t, CatalogFor(p, true, nil), len(Catalog(p)))
 }
 
 // A model reading tools/list on a Community cluster may still see these if the

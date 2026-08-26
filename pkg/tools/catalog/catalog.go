@@ -188,6 +188,8 @@ func ListServices(p *client.Provider) server.ServerTool {
 		utils.ReadOnlyTool(),
 		utils.NamespaceParam(),
 		utils.RegionParam(),
+		utils.PrefixParam("services"),
+		utils.FilterParam(`ServiceName contains "api"  •  Tags contains "canary"`),
 	}
 	opts = append(opts, utils.PageParams()...)
 
@@ -206,6 +208,8 @@ func ListServices(p *client.Provider) server.ServerTool {
 			q := utils.PageFrom(req).Apply(&api.QueryOptions{
 				Namespace: namespace,
 				Region:    p.ResolveRegion(ctx, req.GetString("region", "")),
+				Prefix:    req.GetString("prefix", ""),
+				Filter:    req.GetString("filter", ""),
 			})
 
 			listed, meta, err := nomad.Services().List(q)
@@ -241,6 +245,9 @@ func ListServices(p *client.Provider) server.ServerTool {
 				result.Note = "No services registered with Nomad's own service discovery in namespace " +
 					namespace + ". Jobs using provider = \"consul\" register with Consul instead and " +
 					"will not appear here."
+				if req.GetString("prefix", "") != "" || req.GetString("filter", "") != "" {
+					result.Note += " A prefix or filter was also applied; try removing it."
+				}
 			}
 			return utils.JSONResult(result)
 		},
@@ -389,6 +396,18 @@ func ListVolumes(p *client.Provider) server.ServerTool {
 		volumeTypeParam(),
 		utils.NamespaceParam(),
 		utils.RegionParam(),
+		mcp.WithString("node_id",
+			mcp.Description(
+				"Return only volumes attached to, or available on, this client node. "+
+					"Applies to both volume types. Use it when a job will not place on a "+
+					"particular node and you need to know what storage that node can actually see."),
+		),
+		mcp.WithString("plugin_id",
+			mcp.Description(
+				"Return only volumes provided by this CSI plugin. Applies to CSI volumes only "+
+					"and is ignored when type is \"host\". Use it to scope a storage problem to one "+
+					"plugin when a cluster runs several."),
+		),
 	}
 	opts = append(opts, utils.PageParams()...)
 
@@ -405,6 +424,9 @@ func ListVolumes(p *client.Provider) server.ServerTool {
 			}
 
 			volType := req.GetString("type", "csi")
+			nodeID := req.GetString("node_id", "")
+			pluginID := req.GetString("plugin_id", "")
+
 			q := utils.PageFrom(req).Apply(&api.QueryOptions{
 				Namespace: namespace,
 				Region:    p.ResolveRegion(ctx, req.GetString("region", "")),
@@ -414,7 +436,10 @@ func ListVolumes(p *client.Provider) server.ServerTool {
 
 			switch volType {
 			case "host":
-				stubs, _, err := nomad.HostVolumes().List(nil, q)
+				// Host volumes take their scoping in the request body rather
+				// than as query parameters; plugin_id has no meaning here,
+				// because host volumes have no plugin.
+				stubs, _, err := nomad.HostVolumes().List(&api.HostVolumeListRequest{NodeID: nodeID}, q)
 				if err != nil {
 					return utils.ErrorResult(volumeError(err, p, "list host volumes", namespace))
 				}
@@ -436,6 +461,21 @@ func ListVolumes(p *client.Provider) server.ServerTool {
 				}
 
 			default:
+				// The CSI list endpoint scopes through query parameters. Both
+				// are applied by the Nomad servers, so a cluster with thousands
+				// of volumes never sends them all back to be discarded here.
+				if nodeID != "" || pluginID != "" {
+					if q.Params == nil {
+						q.Params = map[string]string{}
+					}
+					if nodeID != "" {
+						q.Params["node_id"] = nodeID
+					}
+					if pluginID != "" {
+						q.Params["plugin_id"] = pluginID
+					}
+				}
+
 				stubs, _, err := nomad.CSIVolumes().List(q)
 				if err != nil {
 					return utils.ErrorResult(volumeError(err, p, "list CSI volumes", namespace))
@@ -465,6 +505,10 @@ func ListVolumes(p *client.Provider) server.ServerTool {
 				result.Note = "No " + volType + " volumes found in namespace " + namespace +
 					". Note that Nomad keeps CSI and host volumes in separate systems — try type \"" +
 					other + "\" if you expected a volume here."
+				if nodeID != "" || pluginID != "" {
+					result.Note += " This call was also scoped by node_id or plugin_id; " +
+						"try removing that before concluding the volume does not exist."
+				}
 			}
 			return utils.JSONResult(result)
 		},

@@ -3,7 +3,11 @@
 
 package utils
 
-import "github.com/mark3labs/mcp-go/mcp"
+import (
+	"strings"
+
+	"github.com/mark3labs/mcp-go/mcp"
+)
 
 // ReadOnlyTool marks a tool as making no changes to the cluster.
 //
@@ -160,4 +164,56 @@ func StringMap(req mcp.CallToolRequest, name string) map[string]string {
 		return nil
 	}
 	return out
+}
+
+// AllocStatusParam declares the optional client-status filter shared by the
+// allocation list tools.
+//
+// Nomad's per-job and per-node allocation endpoints do not paginate and do not
+// accept a go-bexpr filter, so unlike the `filter` argument this one is applied
+// here rather than by the cluster. It still earns its place: on a job with
+// hundreds of allocations the alternative is that every healthy allocation
+// crowds out the handful that are not.
+func AllocStatusParam() mcp.ToolOption {
+	return mcp.WithString("status",
+		mcp.Description(
+			"Return only allocations in these client statuses. One value, or several separated by "+
+				"commas: pending, running, complete, failed, lost, unknown. "+
+				"Use \"failed,lost\" when investigating a problem — on a large job it is the "+
+				"difference between a readable answer and hundreds of healthy allocations you did "+
+				"not need. Omit it to return every allocation."),
+	)
+}
+
+// AllocStatusFilter reads the status argument and returns a predicate over an
+// allocation's client status. It returns nil when no filter was requested, so
+// the caller can skip the check entirely.
+func AllocStatusFilter(req mcp.CallToolRequest) func(string) bool {
+	wanted := map[string]bool{}
+	for _, s := range strings.Split(req.GetString("status", ""), ",") {
+		if s = strings.ToLower(strings.TrimSpace(s)); s != "" {
+			wanted[s] = true
+		}
+	}
+	if len(wanted) == 0 {
+		return nil
+	}
+	return func(status string) bool {
+		return wanted[strings.ToLower(strings.TrimSpace(status))]
+	}
+}
+
+// FilteredOutNote explains allocations that a status filter removed.
+//
+// An empty list because of a filter looks exactly like an empty list because
+// nothing is there, and the two call for opposite next steps.
+func FilteredOutNote(kept, filtered int, status string) string {
+	if filtered == 0 {
+		return ""
+	}
+	if kept == 0 {
+		return "No allocations match status \"" + status + "\". " +
+			itoa(filtered) + " were excluded by that filter — remove it to see them."
+	}
+	return itoa(filtered) + " further allocations were excluded by the status filter \"" + status + "\"."
 }

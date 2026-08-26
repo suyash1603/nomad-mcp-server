@@ -430,6 +430,7 @@ func ListNodeAllocations(p *client.Provider) server.ServerTool {
 			utils.ReadOnlyTool(),
 			NodeIDParam(),
 			utils.RegionParam(),
+			utils.AllocStatusParam(),
 		),
 		Handler: func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			nodeID, err := req.RequireString("node_id")
@@ -456,8 +457,9 @@ func ListNodeAllocations(p *client.Provider) server.ServerTool {
 			}
 
 			cfg := p.Config()
+			wanted := utils.AllocStatusFilter(req)
 			items := make([]projection.AllocStub, 0, len(allocations))
-			var hidden int
+			var hidden, filtered int
 			for _, a := range allocations {
 				if a == nil {
 					continue
@@ -468,14 +470,24 @@ func ListNodeAllocations(p *client.Provider) server.ServerTool {
 					hidden++
 					continue
 				}
+				if wanted != nil && !wanted(a.ClientStatus) {
+					filtered++
+					continue
+				}
 				items = append(items, projection.Alloc(a.Stub()))
 			}
 
 			result := utils.List{Count: len(items), Items: items}
 			switch {
 			case hidden > 0:
+				// The allowlist is reported ahead of the status filter: a model
+				// that does not know results were withheld can draw a wrong
+				// conclusion about the node, whereas its own filter is a thing
+				// it already knows it asked for.
 				result.Note = "Some allocations on this node were omitted because they are in " +
 					"namespaces this server is not permitted to read."
+			case filtered > 0:
+				result.Note = utils.FilteredOutNote(len(items), filtered, req.GetString("status", ""))
 			case len(items) == 0:
 				result.Note = "This node has no allocations. It may be new, draining, or ineligible — check read_node."
 			}

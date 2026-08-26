@@ -244,6 +244,7 @@ uses, so an environment that already works with `nomad status` works here.
 | `NOMAD_MCP_ALLOW_DESTRUCTIVE` | `--allow-destructive` | `true` | Allow tools that discard state or interrupt running work |
 | `NOMAD_MCP_MAX_LOG_BYTES` | `--max-log-bytes` | `65536` | Cap on log and file reads |
 | `NOMAD_MCP_ENTERPRISE` | `--enterprise` | `auto` | Offer the Enterprise-only tools: `auto`, `true` or `false` |
+| `NOMAD_MCP_TOOLSETS` | `--toolsets` | `all` | Which groups of tools to offer at all — see [Toolsets](#toolsets) |
 
 ### Support bundles
 
@@ -269,6 +270,43 @@ writes.
 Both tiers classify from the annotations the tools already carry rather than
 from a separate list, and both fail closed: a tool that forgot its annotation is
 blocked, not quietly permitted.
+
+### Toolsets
+
+`NOMAD_MCP_TOOLSETS` decides which groups of tools the server offers. The
+default, `all`, is the whole catalog.
+
+```bash
+NOMAD_MCP_TOOLSETS=jobs,allocs,deployments nomad-mcp-server stdio
+```
+
+| Toolset | Covers |
+|---|---|
+| `system` | Cluster status, regions, node pools, agent and scheduler config, Raft, Autopilot, `search` |
+| `jobs` | Job specifications, versions, planning and submission |
+| `allocs` | Allocations, task logs, allocation files, resource statistics |
+| `nodes` | Client nodes, draining, eligibility |
+| `deployments` | Deployments and scheduler evaluations |
+| `catalog` | Namespaces, service registrations, storage volumes |
+| `variables` | Nomad Variables |
+| `diag` | `collect_hcdiag` |
+| `enterprise` | Licence, quotas, Sentinel, Dynamic Application Sizing |
+
+Two reasons to narrow it. Every tool definition is sent to the model on **every
+request**, so a catalog this size is a standing context cost — a client that
+only ever asks about jobs and allocations pays for eighty-eight tools to answer
+questions about twenty-seven. And a toolset that is never registered is a
+scoping control in its own right: a server without the `variables` toolset
+cannot read a Nomad Variable whatever its token permits.
+
+This is a separate axis from read-only mode. Toolsets decide what is *offered*;
+`NOMAD_MCP_READ_ONLY` decides whether the mutating half of what is offered may
+actually run. `NOMAD_MCP_TOOLSETS=jobs` still cannot stop a job unless writes
+are also enabled.
+
+An unknown name is refused at startup, with the valid names in the error
+message. A server that came up quietly missing a third of its tools would look,
+from the model's side, exactly like one that never had them.
 
 ### Transport and logging
 
@@ -369,7 +407,7 @@ See [docs/HCDIAG.md](docs/HCDIAG.md).
 | R | `list_jobs` | Jobs in a namespace, with allocation counts rolled up |
 | R | `read_job` | One job: task groups, drivers, images, resources, constraints |
 | R | `read_job_summary` | Allocation counts per task group — the fastest way to see something is wrong |
-| R | `list_job_allocations` | What is actually running for a job |
+| R | `list_job_allocations` | What is actually running for a job (`status` filters to, say, `failed,lost`) |
 | R | `list_job_evaluations` | Scheduler decisions for a job — **where placement failures live** |
 | R | `list_job_deployments` | Rollouts of a service job |
 | R | `list_job_versions` | Version history with diffs between versions |
@@ -416,7 +454,7 @@ See [docs/HCDIAG.md](docs/HCDIAG.md).
 |---|---|---|
 | R | `list_nodes` | Client nodes: status, pool, class, drain state, healthy drivers |
 | R | `read_node` | One node in detail, with a diagnosis when it cannot take work |
-| R | `list_node_allocations` | Everything running on one node |
+| R | `list_node_allocations` | Everything running on one node (`status` filters it) |
 | R | `get_node_stats` | The machine's real CPU, memory and disk use — **a full disk is a common, invisible cause of failure** |
 | W | `set_node_eligibility` | Mark a node eligible or ineligible for new work |
 | W | `set_node_meta` | Set or remove dynamic metadata, which is what job constraints match on |
@@ -455,9 +493,9 @@ See [docs/HCDIAG.md](docs/HCDIAG.md).
 |---|---|---|
 | R | `list_namespaces` | Namespaces defined in the cluster |
 | R | `read_namespace` | One namespace: quota, node pool restrictions, metadata |
-| R | `list_services` | Services in Nomad's own service discovery |
+| R | `list_services` | Services in Nomad's own service discovery (`prefix`, `filter`) |
 | R | `read_service` | Instances of one service: address, port, tags, owning alloc |
-| R | `list_volumes` | CSI volumes or dynamic host volumes (`type` selects which) |
+| R | `list_volumes` | CSI volumes or dynamic host volumes (`type` selects which; `node_id`, `plugin_id` scope it) |
 | R | `read_volume` | One volume: plugin, capacity, schedulability, mounts |
 | W | `create_namespace` | Create or update a namespace |
 | W! | `delete_namespace` | Delete a namespace permanently |

@@ -7,13 +7,13 @@
     "url": "https://github.com/suyash1603/nomad-mcp-server",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "packages": [
     {
       "registryType": "oci",
       "registryBaseUrl": "https://ghcr.io",
       "identifier": "suyash1603/nomad-mcp-server",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "transport": { "type": "stdio" },
       "runtimeArguments": [
         {
@@ -58,14 +58,20 @@
           "description": "Allow read_variable to return Nomad Variable values. Variables are the cluster's secret store; this is separate from read-only mode.",
           "isRequired": false,
           "default": "false"
+        },
+        {
+          "name": "NOMAD_MCP_TOOLSETS",
+          "description": "Comma-separated toolsets to offer: system, jobs, allocs, nodes, deployments, catalog, variables, diag, enterprise. Narrowing this cuts the context the catalog costs on every request and limits what the server can reach at all.",
+          "isRequired": false,
+          "default": "all"
         }
       ]
     },
     {
       "registryType": "mcpb",
       "registryBaseUrl": "https://github.com",
-      "identifier": "https://github.com/suyash1603/nomad-mcp-server/releases/download/v1.0.0/nomad-mcp-server_1.0.0_darwin_arm64.tar.gz",
-      "version": "1.0.0",
+      "identifier": "https://github.com/suyash1603/nomad-mcp-server/releases/download/v1.0.1/nomad-mcp-server_1.0.1_darwin_arm64.tar.gz",
+      "version": "1.0.1",
       "transport": { "type": "stdio" },
       "runtimeArguments": [
         {
