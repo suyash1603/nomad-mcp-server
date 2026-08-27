@@ -8,7 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
-## [1.0.1] — 2026-08-26
+## [1.0.1] — 2026-08-27
 
 Groundwork for running against large clusters. No tool was removed, renamed or
 changed shape, and a server started with no new configuration behaves exactly
