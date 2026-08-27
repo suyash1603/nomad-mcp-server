@@ -8,6 +8,67 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
+## [1.1.0] — 2026-08-27
+
+Three investigation tools, for clusters large enough that reading one object at
+a time stops working. Nothing existing changed name, arguments or output shape.
+
+### Added
+
+#### Investigation tools
+
+A new `investigate` toolset. These fan out across many allocations and
+correlate several object types, so one call replaces a sequence of five or six.
+
+| Tool | What it answers |
+|---|---|
+| `find_problems` | "Is anything broken?" — one ranked list of everything currently wrong |
+| `search_job_logs` | "Which replica is throwing this error?" — grep every allocation at once |
+| `build_job_timeline` | "What happened, and in what order?" |
+
+**`find_problems`** scans allocations, evaluations, deployments, jobs and nodes
+concurrently and returns ranked findings — failed and lost allocations, blocked
+evaluations, stuck deployments, queued work, nodes down or draining or
+ineligible. Each finding carries a severity, a true total count, example IDs and
+the specific tool to call next. It notices things a per-object read cannot, such
+as every failed allocation sitting on one node.
+
+**`search_job_logs`** reads every allocation of a job concurrently, matches on
+the server side, and returns only matching lines with the allocation, node and
+task they came from. Failed and lost allocations are searched first, so the
+target cap keeps the ones most likely to explain a problem.
+
+**`build_job_timeline`** merges job version submissions (with the fields each
+one changed), evaluations, deployment start and completion, and per-task
+allocation events into one chronological list. Ties within the same second break
+in causal order — version, then evaluation, then allocation, then task event —
+because Nomad records all four to the nanosecond but they routinely share a
+second.
+
+#### Honesty about what Nomad cannot do
+
+Nomad's log API has no time filter. Logs are files on the client that Nomad
+rotates, and a rescheduled allocation's logs go with it.
+
+`search_job_logs` accepts `since` and `until`, applied to lines the workload
+timestamped itself — bracketed and bare RFC3339, and space-separated dates. When
+no line carried a parseable timestamp the filter had no effect, and
+`time_filter_note` says exactly that instead of implying a time range that was
+never enforced. A search that matched nothing reports that it is not proof the
+event never happened, and a scan whose checks failed reports unknown rather than
+healthy. Each of those three is covered by a test.
+
+### Fixed
+
+- The binary inside the container image reported an empty commit and a
+  1970 build date. The image build never passed `-ldflags` for
+  `version.GitCommit` or `version.BuildDate`, so there was no way to tell which
+  source a running container came from.
+- A failed image job left the release marked Latest, advertising a container
+  that was never pushed — which is how 1.0.0 shipped with no image at all.
+  Releases are now created as a draft and published only once the binaries and
+  the image are both up.
+
 ## [1.0.1] — 2026-08-27
 
 Groundwork for running against large clusters. No tool was removed, renamed or
