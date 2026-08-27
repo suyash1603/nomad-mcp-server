@@ -13,6 +13,12 @@ RUN apk add --no-cache ca-certificates
 # -----------------------------------
 FROM golang:1.26-alpine AS devbuild
 ARG VERSION="dev"
+# Build metadata, injected the same way the Makefile does it. Without these the
+# binary inside the image reports an empty commit and a 1970 build date, so
+# there is no way to tell which source a running container came from — the
+# version alone cannot distinguish two builds of the same tag.
+ARG GIT_COMMIT=""
+ARG BUILD_DATE=""
 WORKDIR /build
 
 # Dependencies first, so the module cache layer survives source edits.
@@ -21,7 +27,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build go mod download
 
 COPY . ./
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -ldflags="-s -w" \
+    CGO_ENABLED=0 go build \
+    -ldflags="-s -w \
+      -X github.com/suyash1603/nomad-mcp-server/version.GitCommit=${GIT_COMMIT} \
+      -X github.com/suyash1603/nomad-mcp-server/version.BuildDate=${BUILD_DATE}" \
     -o nomad-mcp-server ./cmd/nomad-mcp-server
 
 # dev runs the compiled binary from a scratch image.
