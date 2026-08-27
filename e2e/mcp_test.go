@@ -68,9 +68,18 @@ func TestClusterStatusAgainstARealAgent(t *testing.T) {
 func TestReadOnlyModeRefusesARealWrite(t *testing.T) {
 	c := newClient(t) // NOMAD_MCP_READ_ONLY=true is the harness default
 
-	msg := c.toolFails("run_job", map[string]any{
-		"jobspec": example(t, "hello-service.nomad.hcl"),
-	})
+	// A name no other test submits. Every test in this package shares one
+	// Nomad agent, so asserting "this job does not exist" against a name
+	// another test legitimately creates makes the result depend on the order
+	// the files happen to be compiled in.
+	const probe = "readonly-refusal-probe"
+	jobspec := strings.Replace(
+		example(t, "hello-service.nomad.hcl"), `job "hello-service"`, `job "`+probe+`"`, 1)
+	if !strings.Contains(jobspec, probe) {
+		t.Fatal("the example jobspec no longer declares job \"hello-service\"; update this test")
+	}
+
+	msg := c.toolFails("run_job", map[string]any{"jobspec": jobspec})
 
 	for _, want := range []string{"read-only", "NOMAD_MCP_READ_ONLY", "do not retry"} {
 		if !strings.Contains(msg, want) {
@@ -80,7 +89,7 @@ func TestReadOnlyModeRefusesARealWrite(t *testing.T) {
 
 	// And the job must genuinely not exist afterwards.
 	jobs := c.tool("list_jobs", nil)
-	if strings.Contains(mustJSON(t, jobs), "hello-service") {
+	if strings.Contains(mustJSON(t, jobs), probe) {
 		t.Fatal("a refused run_job created the job anyway")
 	}
 }

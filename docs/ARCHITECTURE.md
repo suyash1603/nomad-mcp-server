@@ -434,6 +434,54 @@ only**, and actively **rejects** requests that put them in the query string:
 Both get a 400 rather than being ignored, so a client doing it finds out
 immediately. The rejection never echoes the offending value back.
 
+## `pkg/tools/investigate/` — the investigation tools
+
+The other tool packages are organised by which Nomad endpoint they call. This
+one is organised by what the tools are *for*, because none of them maps to a
+single endpoint: `find_problems` reads allocations, evaluations, deployments,
+jobs and nodes; `build_job_timeline` merges four object types; `search_job_logs`
+reads one job's allocations and then a log stream per task per allocation.
+
+The distinction is the reason the package exists. An inspection tool maps one
+endpoint to one result and leaves the joining to the caller, which is fine on a
+small cluster and stops working on a large one — not because the calls get
+slower, but because the model runs out of context before it finishes joining.
+
+Three rules hold across all three tools:
+
+- **Everything fans out under `utils.FanOut`**, so concurrency, target count and
+  wall-clock time are bounded. `find_problems` fans out over its *checks* rather
+  than over targets, which is what lets one check failing — a token without
+  `node:read`, usually — cost only that check's findings.
+- **Rank, never enumerate.** Results are capped and report the total they were
+  drawn from, so `count` is trustworthy even when `examples` is trimmed.
+- **Say what was not covered.** A sampled scan reported as exhaustive is the
+  failure these tools exist to avoid.
+
+That last rule is not decoration. Three specific claims are guarded by tests
+because a model will otherwise make them:
+
+- A log search that matched nothing is **not** proof the event never happened.
+  Logs rotate and rescheduled allocations take theirs with them.
+- A `since`/`until` window on a log search applies only to lines the workload
+  timestamped itself. When none were parseable the filter had *no effect*, and
+  the result says so rather than implying a time range it never enforced.
+- A scan whose checks failed is **unknown**, not healthy.
+
+### Reusing the projection layer
+
+`find_problems` renders a placement failure through `projection.Evaluation`
+rather than reading the metric itself. That is not merely tidiness. Nomad
+reports a failure as a set of counters, and the most common real case —
+a constraint that matches no node at all — arrives with *every counter empty*
+and `NodesEvaluated` at zero. An early version of this scan read
+`ConstraintFiltered` directly and reported "1 evaluation recorded placement
+failures" with no reason attached, which is the least useful possible answer.
+The projection layer already turns that shape into a sentence; the e2e suite
+submits `examples/unplaceable.nomad.hcl` specifically to keep it doing so.
+
+---
+
 ## `pkg/utils/fanout.go` — bounded fan-out
 
 `FanOut` applies a function to many targets — allocations, nodes — under three
@@ -460,8 +508,8 @@ Three properties are worth knowing:
   failure mode this guards against — "nothing is failing" when sixty
   allocations were never checked.
 
-Nothing calls it yet; the investigation tools that do land next, and they should
-all inherit one set of limits rather than each growing their own.
+Its consumers are the three tools in `pkg/tools/investigate/`, which is why the
+limits live here rather than in any one of them.
 
 ---
 
