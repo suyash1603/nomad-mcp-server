@@ -5,9 +5,9 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 assistant structured, safe access to a Nomad cluster: what is running, what is
 broken, why, and — when you let it — how to fix it.
 
-91 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
-volumes and variables, plus three cross-cutting investigation tools and hcdiag
-support-bundle collection. Works against Nomad Community Edition and Enterprise, and
+96 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
+volumes, CSI plugins and variables, plus five cross-cutting investigation tools
+and hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
 against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
 API is reachable.
 
@@ -285,11 +285,11 @@ NOMAD_MCP_TOOLSETS=jobs,allocs,deployments nomad-mcp-server stdio
 |---|---|
 | `system` | Cluster status, regions, node pools, agent and scheduler config, Raft, Autopilot, `search` |
 | `jobs` | Job specifications, versions, planning and submission |
-| `allocs` | Allocations, task logs, allocation files, resource statistics |
-| `investigate` | Cluster-wide problem scan, job log search, job timeline |
+| `allocs` | Allocations, task logs, allocation files, resource statistics, health checks |
+| `investigate` | Cluster-wide problem scan, job log search, job timeline, volume and integration diagnosis |
 | `nodes` | Client nodes, draining, eligibility |
 | `deployments` | Deployments and scheduler evaluations |
-| `catalog` | Namespaces, service registrations, storage volumes |
+| `catalog` | Namespaces, service registrations, storage volumes, CSI plugins |
 | `variables` | Nomad Variables |
 | `diag` | `collect_hcdiag` |
 | `enterprise` | Licence, quotas, Sentinel, Dynamic Application Sizing |
@@ -335,7 +335,7 @@ plaintext, and failing at startup beats a warning nobody reads.
 
 ## Tools
 
-91 tools: **54 read-only** and **37 mutating**. Twelve of them are Enterprise-only
+96 tools: **59 read-only** and **37 mutating**. Twelve of them are Enterprise-only
 and are not registered at all against a cluster identified as Community Edition —
 see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
 
@@ -358,9 +358,20 @@ slower, but because the model runs out of context before it reaches the answer.
 | R | `find_problems` | **Start here for anything open-ended.** One ranked list of everything currently wrong: failed and lost allocations, blocked evaluations, stuck deployments, queued work, unhealthy nodes. Each finding carries a count, examples and the tool to call next |
 | R | `search_job_logs` | Grep every allocation of a job at once, concurrently, returning only matching lines with the allocation, node and task they came from |
 | R | `build_job_timeline` | Merge job versions, evaluations, deployments and task events into one chronological narrative — what happened, in order |
+| R | `diagnose_volume` | Follow a volume through its CSI plugin, its claims and the nodes holding them — including **stale claims** held by dead allocations |
+| R | `diagnose_integrations` | Find Vault and Consul failures from Nomad's own task events: token derivation, template rendering, Connect sidecars, service registration |
 
 `find_problems` says what is wrong **now**; `build_job_timeline` says how it got
-that way. When `search_job_logs` finds nothing, reach for the timeline: Nomad
+that way. `diagnose_volume` and `diagnose_integrations` are the two specialised
+ones, for the areas where the cause is furthest from the symptom.
+
+**Why storage and integrations get their own tools.** Both fail in a way that
+leaves nothing to read. A task whose Vault token cannot be derived, or whose
+template will not render, **never starts** — so `read_allocation_logs` returns
+nothing and the job looks fine. A volume with a stale claim looks entirely
+healthy in `read_volume`; the allocation holding it is dead and the new one sits
+pending forever. In both cases the only record is in the allocation's task
+events, one allocation at a time, which is exactly what these two scan. When `search_job_logs` finds nothing, reach for the timeline: Nomad
 records those events independently of anything the workload writes, so they
 survive log rotation and exist even for an allocation that never started.
 
@@ -472,6 +483,7 @@ See [docs/HCDIAG.md](docs/HCDIAG.md).
 | R | `list_allocation_files` | Files inside a running allocation's directory |
 | R | `read_allocation_file` | Contents of one such file |
 | R | `get_allocation_stats` | Live CPU and memory use per task |
+| R | `get_allocation_checks` | Health check results — the gap between "running" and "actually working" |
 | W! | `restart_allocation` | Restart tasks in place |
 | W! | `stop_allocation` | Stop one allocation; Nomad reschedules it elsewhere |
 | W! | `signal_allocation` | Send a Unix signal to a task |
@@ -524,6 +536,8 @@ See [docs/HCDIAG.md](docs/HCDIAG.md).
 | R | `list_services` | Services in Nomad's own service discovery (`prefix`, `filter`) |
 | R | `read_service` | Instances of one service: address, port, tags, owning alloc |
 | R | `list_volumes` | CSI volumes or dynamic host volumes (`type` selects which; `node_id`, `plugin_id` scope it) |
+| R | `list_csi_plugins` | CSI plugins with healthy-versus-expected controller and node counts |
+| R | `read_csi_plugin` | One plugin, naming **which** instances are unhealthy and on which nodes |
 | R | `read_volume` | One volume: plugin, capacity, schedulability, mounts |
 | W | `create_namespace` | Create or update a namespace |
 | W! | `delete_namespace` | Delete a namespace permanently |

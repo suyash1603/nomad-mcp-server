@@ -134,7 +134,7 @@ var toolsetDefs = []toolsetDef{
 	},
 	{
 		name:    ToolsetAllocs,
-		summary: "allocations, task logs, allocation files and resource statistics",
+		summary: "allocations, task logs, allocation files, resource statistics and health checks",
 		build: func(p *client.Provider) []server.ServerTool {
 			return []server.ServerTool{
 				// Read.
@@ -144,6 +144,7 @@ var toolsetDefs = []toolsetDef{
 				allocs.ListAllocationFiles(p),
 				allocs.ReadAllocationFile(p),
 				allocs.GetAllocationStats(p),
+				allocs.GetAllocationChecks(p),
 
 				// Write.
 				allocs.RestartAllocation(p),
@@ -154,7 +155,7 @@ var toolsetDefs = []toolsetDef{
 	},
 	{
 		name:    ToolsetInvestigate,
-		summary: "cross-cutting investigation: cluster-wide problem scan, job log search, job timeline",
+		summary: "cross-cutting investigation: cluster-wide problem scan, job log search, job timeline, volume and integration diagnosis",
 		build: func(p *client.Provider) []server.ServerTool {
 			return []server.ServerTool{
 				// These fan out across many allocations and correlate several
@@ -163,6 +164,8 @@ var toolsetDefs = []toolsetDef{
 				investigate.FindProblems(p),
 				investigate.SearchJobLogs(p),
 				investigate.BuildJobTimeline(p),
+				investigate.DiagnoseVolume(p),
+				investigate.DiagnoseIntegrations(p),
 			}
 		},
 	},
@@ -209,7 +212,7 @@ var toolsetDefs = []toolsetDef{
 	},
 	{
 		name:    ToolsetCatalog,
-		summary: "namespaces, service registrations and storage volumes",
+		summary: "namespaces, service registrations, storage volumes and CSI plugins",
 		build: func(p *client.Provider) []server.ServerTool {
 			return []server.ServerTool{
 				// Read.
@@ -219,6 +222,8 @@ var toolsetDefs = []toolsetDef{
 				catalog.ReadService(p),
 				catalog.ListVolumes(p),
 				catalog.ReadVolume(p),
+				catalog.ListCSIPlugins(p),
+				catalog.ReadCSIPlugin(p),
 
 				// Write.
 				catalog.CreateNamespace(p),

@@ -468,6 +468,32 @@ because a model will otherwise make them:
   the result says so rather than implying a time range it never enforced.
 - A scan whose checks failed is **unknown**, not healthy.
 
+### The two specialised diagnostics
+
+`diagnose_volume` and `diagnose_integrations` exist because storage and
+integration failures share a property that makes them hard: **they leave nothing
+to read.**
+
+A task whose Vault token cannot be derived, or whose template will not render,
+never starts. There are no logs, `read_allocation_logs` returns nothing, and the
+job specification looks correct. The only record is in the allocation's task
+events. `diagnose_integrations` matches those events against a table of
+signatures — token derivation, template render, Connect sidecar, service
+registration, workload identity — and clusters the hits.
+
+The signature table is the part to be careful with. A pattern that fires on a
+healthy event would report a broken integration on every cluster, so
+`TestSignaturesDoNotMatchOrdinaryEvents` asserts none of them match the ordinary
+lifecycle events every allocation emits.
+
+`diagnose_volume` is the join: volume → plugin health → claims → the allocations
+holding them → whether those are still alive. **Stale claim detection** is the
+reason it earns its place. Nomad's claim maps are keyed by allocation ID with
+nil values, and the live detail lives in a separate `Allocations` slice — so a
+claim whose allocation is absent from that slice, or present but terminal, is
+holding a volume it will never release. That is invisible in `read_volume`, and
+it is the most common cause of a volume that looks fine and will not attach.
+
 ### Reusing the projection layer
 
 `find_problems` renders a placement failure through `projection.Evaluation`

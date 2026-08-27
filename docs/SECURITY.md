@@ -242,6 +242,28 @@ workload cannot crowd out the rest of a result.
 evaluations, deployments, node health — none of which a workload authors. It
 carries no such warning because it needs none.
 
+`diagnose_integrations` matches task event text, which drivers and workloads
+write, so it carries the same warning. It also reads two things from the agent
+configuration, and the choice of which two is deliberate.
+
+`get_agent_config` refuses to expose the `vault` and `consul` blocks at all,
+because they contain a token, TLS key paths and the addresses of internal
+infrastructure. `diagnose_integrations` does not widen that. From the Vault
+block it reads **only** `Enabled` and the cluster `Name`; from Consul, **only
+how many clusters are configured**. It never reads `Token`, `Addr`, `Role` or
+any TLS field, and there is a test that fails if a change starts returning them.
+
+Whether an integration is switched on is not a secret, and it answers the most
+common confusion outright: a job with a `vault` block on a cluster where Vault
+was never enabled. Everything else the tool reports comes from task events,
+which need no configuration at all.
+
+The tool queries neither Vault nor Consul and holds no credentials for either.
+It names the role or path to investigate and stops there; confirming the cause
+is a separate step with separate tooling. Holding Vault credentials here would
+undermine the token-scoping argument above more thoroughly than ACL tools
+would.
+
 If this is a surface you would rather not have at all,
 `NOMAD_MCP_TOOLSETS` without `investigate` removes all three.
 
