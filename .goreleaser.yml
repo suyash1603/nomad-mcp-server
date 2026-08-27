@@ -73,7 +73,10 @@ changelog:
       - '^Merge'
 
 release:
-  draft: false
+  # Created as a draft. The release workflow's publish job clears the flag once
+  # the binaries AND the container image are both up, so a release is never
+  # visible advertising an artifact that failed to publish.
+  draft: true
   prerelease: auto
   footer: |
     ## Install

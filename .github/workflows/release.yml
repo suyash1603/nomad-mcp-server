@@ -77,6 +77,11 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
+      # The commit date rather than the wall clock, so two builds of the same
+      # tag produce the same metadata. This mirrors what the Makefile does.
+      - id: build_meta
+        run: echo "date=$(git show --no-show-signature -s --format=%cd --date=format:'%Y-%m-%dT%H:%M:%SZ' HEAD)" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -86,5 +91,26 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_name }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.build_meta.outputs.date }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The release is created as a draft and only published once every artifact
+  # is actually up. Without this a failed image job still leaves a release
+  # marked Latest, advertising a container that was never pushed — which is
+  # exactly how v1.0.0 shipped with no image and nobody noticed, because the
+  # Releases page looked complete.
+  publish:
+    name: Publish the release
+    needs: [binaries, image]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # GitHub decides "Latest" itself once the draft flag clears, and honours
+      # the prerelease flag goreleaser set, so neither is forced here.
+      - run: gh release edit "$TAG" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}

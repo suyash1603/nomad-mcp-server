@@ -124,7 +124,10 @@ inspector: build
 
 ## docker-build: build the docker image
 docker-build:
-	$(DOCKER) build --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME) .
+	$(DOCKER) build --build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(IMAGE_NAME) .
 
 ## docker-push: push the docker image
 docker-push: docker-build
