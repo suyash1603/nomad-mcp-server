@@ -15,6 +15,7 @@ import (
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/catalog"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/diag"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/enterprise"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/investigate"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/jobs"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/nodes"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/scheduler"
@@ -31,6 +32,7 @@ const (
 	ToolsetDeployments = "deployments"
 	ToolsetCatalog     = "catalog"
 	ToolsetVariables   = "variables"
+	ToolsetInvestigate = "investigate"
 	ToolsetEnterprise  = "enterprise"
 	ToolsetDiag        = "diag"
 )
@@ -147,6 +149,20 @@ var toolsetDefs = []toolsetDef{
 				allocs.RestartAllocation(p),
 				allocs.StopAllocation(p),
 				allocs.SignalAllocation(p),
+			}
+		},
+	},
+	{
+		name:    ToolsetInvestigate,
+		summary: "cross-cutting investigation: cluster-wide problem scan, job log search, job timeline",
+		build: func(p *client.Provider) []server.ServerTool {
+			return []server.ServerTool{
+				// These fan out across many allocations and correlate several
+				// object types, so they are grouped by what they are for
+				// rather than by which endpoint they call.
+				investigate.FindProblems(p),
+				investigate.SearchJobLogs(p),
+				investigate.BuildJobTimeline(p),
 			}
 		},
 	},

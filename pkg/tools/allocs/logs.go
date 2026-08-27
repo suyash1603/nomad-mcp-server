@@ -319,3 +319,79 @@ func sortStrings(s []string) {
 		}
 	}
 }
+
+// ReadTaskLogTail returns the last maxBytes of one task's log stream.
+//
+// It exists so that tools which fan out across many allocations — searching a
+// whole job's logs, for instance — reuse this package's stream handling rather
+// than reimplementing frame draining and its EOF quirks.
+//
+// The read starts from the end rather than reading the whole stream and
+// trimming afterwards. A task that has been running for a week can have a very
+// large log, and pulling all of it back only to discard the front is both slow
+// and, multiplied by a fan-out's concurrency, a real amount of memory.
+//
+// The first line is usually partial, since the offset lands mid-line. Callers
+// that count lines should drop it; SplitLogLines does.
+func ReadTaskLogTail(
+	ctx context.Context,
+	nomad *api.Client,
+	alloc *api.Allocation,
+	task, logType, namespace, region string,
+	maxBytes int64,
+) (string, error) {
+	readCtx, cancel := context.WithTimeout(ctx, logReadTimeout)
+	defer cancel()
+
+	stop := make(chan struct{})
+	go func() {
+		<-readCtx.Done()
+		close(stop)
+	}()
+
+	frames, errCh := nomad.AllocFS().Logs(alloc, false, task, logType, "end", maxBytes, stop,
+		&api.QueryOptions{Namespace: namespace, Region: region})
+
+	return drainFrames(readCtx, frames, errCh)
+}
+
+// SplitLogLines splits a log tail into whole lines.
+//
+// The first line is dropped when the content looks like a tail that began
+// mid-line, because reporting half a line as a match is misleading — the part
+// that would explain it is the part that was cut off.
+func SplitLogLines(content string, isTail bool) []string {
+	if content == "" {
+		return nil
+	}
+
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	if isTail && len(lines) > 1 {
+		lines = lines[1:]
+	}
+	// A trailing newline yields a final empty element that is not a line.
+	if n := len(lines); n > 0 && lines[n-1] == "" {
+		lines = lines[:n-1]
+	}
+	return lines
+}
+
+// TaskNames returns the names of every task in an allocation's task group.
+func TaskNames(alloc *api.Allocation) []string {
+	if alloc == nil || alloc.Job == nil {
+		return nil
+	}
+	for _, tg := range alloc.Job.TaskGroups {
+		if tg.Name == nil || alloc.TaskGroup != *tg.Name {
+			continue
+		}
+		names := make([]string, 0, len(tg.Tasks))
+		for _, t := range tg.Tasks {
+			if t != nil && t.Name != "" {
+				names = append(names, t.Name)
+			}
+		}
+		return names
+	}
+	return nil
+}

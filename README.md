@@ -5,8 +5,9 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 assistant structured, safe access to a Nomad cluster: what is running, what is
 broken, why, and — when you let it — how to fix it.
 
-88 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
-volumes and variables, plus hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
+91 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
+volumes and variables, plus three cross-cutting investigation tools and hcdiag
+support-bundle collection. Works against Nomad Community Edition and Enterprise, and
 against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
 API is reachable.
 
@@ -285,6 +286,7 @@ NOMAD_MCP_TOOLSETS=jobs,allocs,deployments nomad-mcp-server stdio
 | `system` | Cluster status, regions, node pools, agent and scheduler config, Raft, Autopilot, `search` |
 | `jobs` | Job specifications, versions, planning and submission |
 | `allocs` | Allocations, task logs, allocation files, resource statistics |
+| `investigate` | Cluster-wide problem scan, job log search, job timeline |
 | `nodes` | Client nodes, draining, eligibility |
 | `deployments` | Deployments and scheduler evaluations |
 | `catalog` | Namespaces, service registrations, storage volumes |
@@ -333,7 +335,7 @@ plaintext, and failing at startup beats a warning nobody reads.
 
 ## Tools
 
-88 tools: **51 read-only** and **37 mutating**. Twelve of them are Enterprise-only
+91 tools: **54 read-only** and **37 mutating**. Twelve of them are Enterprise-only
 and are not registered at all against a cluster identified as Community Edition —
 see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
 
@@ -343,6 +345,32 @@ server honestly, and a blocked call returns an explanation rather than an
 
 Legend: **R** read-only · **W** mutating · **W!** mutating and destructive
 (can discard state or interrupt running work) · **E** requires Nomad Enterprise.
+
+### Investigation
+
+These fan out across many allocations and correlate several object types, so one
+call replaces a sequence of five or six. They exist because the inspection tools
+below stop scaling somewhere around a hundred allocations — not because they get
+slower, but because the model runs out of context before it reaches the answer.
+
+| | Tool | What it does |
+|---|---|---|
+| R | `find_problems` | **Start here for anything open-ended.** One ranked list of everything currently wrong: failed and lost allocations, blocked evaluations, stuck deployments, queued work, unhealthy nodes. Each finding carries a count, examples and the tool to call next |
+| R | `search_job_logs` | Grep every allocation of a job at once, concurrently, returning only matching lines with the allocation, node and task they came from |
+| R | `build_job_timeline` | Merge job versions, evaluations, deployments and task events into one chronological narrative — what happened, in order |
+
+`find_problems` says what is wrong **now**; `build_job_timeline` says how it got
+that way. When `search_job_logs` finds nothing, reach for the timeline: Nomad
+records those events independently of anything the workload writes, so they
+survive log rotation and exist even for an allocation that never started.
+
+**On log searching and time.** Nomad's log API has no time filter. Logs are
+files on the client node that Nomad rotates, so only recent output exists at
+all, and a rescheduled allocation's logs are gone with it. `search_job_logs`
+accepts `since` and `until`, but they can only be applied to lines the workload
+timestamped itself — and when it did not, the result says so in
+`time_filter_note` rather than quietly returning everything. Do not read a log
+search as proof that something never happened.
 
 ### Cluster, connection and search
 

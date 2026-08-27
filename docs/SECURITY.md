@@ -221,6 +221,32 @@ from a secret store is the worst thing this server could do.
 
 ---
 
+## The investigation tools read more at once
+
+`search_job_logs` reads the logs of many allocations in a single call, and
+`build_job_timeline` reads task events across every allocation of a job. Neither
+can reach anything the equivalent single-object tools could not — the token
+still decides that, and namespace scoping still applies — but they gather more
+of it per call, which matters for one thing in particular.
+
+Task logs and job metadata are written by the workloads, and on any real cluster
+that includes things nobody in the conversation wrote. That makes them the
+server's main prompt-injection surface. A fan-out collects the same
+attacker-controlled content from many sources at once, which is a larger
+surface, not a smaller one, so both tools label their output as untrusted with
+an explicit instruction to report an apparent instruction as a finding rather
+than act on it. Volume is capped per allocation as well as overall, so one noisy
+workload cannot crowd out the rest of a result.
+
+`find_problems` reads only Nomad's own scheduler state — allocation statuses,
+evaluations, deployments, node health — none of which a workload authors. It
+carries no such warning because it needs none.
+
+If this is a surface you would rather not have at all,
+`NOMAD_MCP_TOOLSETS` without `investigate` removes all three.
+
+---
+
 ## Toolsets: not offering a capability at all
 
 `NOMAD_MCP_TOOLSETS` decides which groups of tools are registered. It defaults
