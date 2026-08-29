@@ -8,7 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
-## [1.2.0] — unreleased
+## [1.2.0] — 2026-08-29
 
 Storage and integration troubleshooting: the two areas where the cause is
 furthest from the symptom. Nothing existing changed name, arguments or output
