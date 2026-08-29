@@ -8,6 +8,60 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
+## [1.2.0] — 2026-08-29
+
+Storage and integration troubleshooting: the two areas where the cause is
+furthest from the symptom. Nothing existing changed name, arguments or output
+shape.
+
+### Added
+
+Five tools, taking the catalog to 96 — 59 read-only, 37 mutating.
+
+#### Vault and Consul, read from the Nomad side
+
+**`diagnose_integrations`** scans task events cluster-wide for the failures
+whose cause lives in Vault or Consul but whose only record is in Nomad: token
+derivation, template rendering, Connect sidecar startup, service registration
+and workload identity. It clusters and ranks the hits, and names the role or
+path to investigate.
+
+These are hard to find any other way because the task usually **never starts**,
+so there are no logs — `read_allocation_logs` returns nothing and the job looks
+fine.
+
+It **reads Nomad only** and holds no Vault or Consul credentials. From the agent
+configuration it reads only whether Vault is enabled and how many Consul
+clusters are configured; never a token, address, role or TLS path. See
+[docs/SECURITY.md](docs/SECURITY.md).
+
+#### Storage
+
+**`diagnose_volume`** follows a volume through its CSI plugin, its claims, the
+allocations holding them and the nodes those are on — one call in place of five.
+It detects **stale claims**: a volume still held by an allocation that is dead.
+That is the most common cause of a volume that looks entirely healthy in
+`read_volume` and will not attach, and it makes a new allocation sit pending
+indefinitely with nothing obviously wrong.
+
+**`list_csi_plugins`** and **`read_csi_plugin`** show healthy-versus-expected
+controller and node counts, and name which specific instances are unhealthy.
+When a volume will not mount, the answer is usually here rather than in the
+volume — a plugin short of a node instance blocks placement on exactly those
+nodes while the volume itself still looks fine.
+
+#### Health checks
+
+**`get_allocation_checks`** returns the health check results for an allocation:
+the gap between "running" and "actually working". An allocation can be running
+and failing every check it has, and nothing in `read_allocation` says so — which
+is the usual explanation for a deployment that places allocations but never
+progresses.
+
+An allocation with no checks says so explicitly rather than reporting healthy.
+No checks and no failing checks look identical in the data and mean opposite
+things.
+
 ## [1.1.0] — 2026-08-27
 
 Three investigation tools, for clusters large enough that reading one object at

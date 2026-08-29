@@ -7,13 +7,13 @@
     "url": "https://github.com/suyash1603/nomad-mcp-server",
     "source": "github"
   },
-  "version": "1.1.0",
+  "version": "1.2.0",
   "packages": [
     {
       "registryType": "oci",
       "registryBaseUrl": "https://ghcr.io",
       "identifier": "suyash1603/nomad-mcp-server",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "transport": {
         "type": "stdio"
       },
@@ -72,8 +72,8 @@
     {
       "registryType": "mcpb",
       "registryBaseUrl": "https://github.com",
-      "identifier": "https://github.com/suyash1603/nomad-mcp-server/releases/download/v1.1.0/nomad-mcp-server_1.1.0_darwin_arm64.tar.gz",
-      "version": "1.1.0",
+      "identifier": "https://github.com/suyash1603/nomad-mcp-server/releases/download/v1.2.0/nomad-mcp-server_1.2.0_darwin_arm64.tar.gz",
+      "version": "1.2.0",
       "transport": {
         "type": "stdio"
       },
