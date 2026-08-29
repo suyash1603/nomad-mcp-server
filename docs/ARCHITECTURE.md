@@ -508,6 +508,53 @@ submits `examples/unplaceable.nomad.hcl` specifically to keep it doing so.
 
 ---
 
+## `pkg/tools/capacity/` — the arithmetic tools
+
+Capacity questions need three views joined: node totals, what allocations
+consume, and what a job specification asks for. Nomad exposes all three and
+joins none of them, so answering "is there room for this?" by hand means holding
+a lot of small numbers in your head — exactly where a model reading many tool
+results drifts.
+
+Two implementation notes worth knowing:
+
+**Two calls, whatever the cluster size.** Both `/v1/nodes` and `/v1/allocations`
+return their resource fields when asked (`?resources=true`), so `loadCluster`
+reads every node and every allocation once and joins them by node ID. Walking
+nodes individually would be O(nodes) round trips and would not finish on a large
+cluster.
+
+**Reservations, not usage.** Only allocations in `running` or `pending` hold
+their reservation; a completed one still appears in the list and counting it
+would invent pressure that does not exist. `MemoryMaxMB` is likewise excluded —
+it is an oversubscription ceiling the scheduler never reserves against.
+
+### The distinction the package exists for
+
+Cluster-wide free capacity does not answer the question people ask of it,
+because a task group must fit on a **single node**. Ten nodes with 1GB free each
+cannot run one 2GB task. Every total is therefore reported next to
+`largest_placeable_on_one_node`, and the notes say which of the two answers
+"will this fit?".
+
+Two bugs found while building this, both of the confidently-wrong kind that is
+worse than no answer:
+
+- `explain_placement` first counted **nodes** that could fit one allocation and
+  compared that to `count`, reporting "only 1 node can take it, so 1 of 2 will
+  stay queued" for a job that was at that moment running both on one node. Nomad
+  packs several allocations of a group onto one node unless `distinct_hosts`
+  forbids it, so the unit has to be allocations. `distinct_hosts` is now the one
+  constraint the tool does evaluate, because ignoring it overstates capacity by
+  the node count.
+- `analyze_job_resources` read `MemoryStats.Usage` unconditionally. Which fields
+  a driver populates varies by platform: cgroups fill `Usage` and `MaxUsage`,
+  while several drivers report only `RSS` and leave the rest at zero. Reading
+  `Usage` alone reported every task on those drivers as using no memory. It now
+  consults `Measured` and distinguishes unmeasured from zero.
+
+---
+
 ## `pkg/utils/fanout.go` — bounded fan-out
 
 `FanOut` applies a function to many targets — allocations, nodes — under three

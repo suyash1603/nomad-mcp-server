@@ -12,6 +12,7 @@ import (
 
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/allocs"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/capacity"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/catalog"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/diag"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/enterprise"
@@ -33,6 +34,7 @@ const (
 	ToolsetCatalog     = "catalog"
 	ToolsetVariables   = "variables"
 	ToolsetInvestigate = "investigate"
+	ToolsetCapacity    = "capacity"
 	ToolsetEnterprise  = "enterprise"
 	ToolsetDiag        = "diag"
 )
@@ -166,6 +168,19 @@ var toolsetDefs = []toolsetDef{
 				investigate.BuildJobTimeline(p),
 				investigate.DiagnoseVolume(p),
 				investigate.DiagnoseIntegrations(p),
+			}
+		},
+	},
+	{
+		name:    ToolsetCapacity,
+		summary: "cluster capacity, per-node placement feasibility and job right-sizing",
+		build: func(p *client.Provider) []server.ServerTool {
+			return []server.ServerTool{
+				// Arithmetic over the node, allocation and job views. Nomad
+				// exposes every number these need and joins none of them.
+				capacity.GetClusterCapacity(p),
+				capacity.ExplainPlacement(p),
+				capacity.AnalyzeJobResources(p),
 			}
 		},
 	},
