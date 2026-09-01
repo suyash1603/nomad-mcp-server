@@ -8,7 +8,7 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
-## [1.3.0] — unreleased
+## [1.3.0] — 2026-09-01
 
 Capacity and sizing: three tools that do the arithmetic Nomad leaves to you.
 Nothing existing changed name, arguments or output shape.
