@@ -579,7 +579,7 @@ func (c *Config) EnterpriseAuto() bool { return c.Enterprise == "auto" || c.Ente
 // exists, which is what stops the two drifting apart.
 func ToolsetsFlagUsage() string {
 	return "Comma-separated toolsets to offer: " +
-		"system, jobs, allocs, investigate, nodes, deployments, catalog, variables, diag, enterprise. " +
+		"system, jobs, allocs, investigate, capacity, nodes, deployments, catalog, variables, diag, enterprise. " +
 		"Narrowing this cuts the context the catalog costs on every request, and limits " +
 		"what the server can reach at all. Default " + DefaultToolsets
 

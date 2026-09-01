@@ -8,6 +8,49 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
+## [1.3.0] — 2026-09-01
+
+Capacity and sizing: three tools that do the arithmetic Nomad leaves to you.
+Nothing existing changed name, arguments or output shape.
+
+### Added
+
+A new `capacity` toolset, taking the catalog to 99 — 62 read-only, 37 mutating.
+
+**`get_cluster_capacity`** reports what the cluster has, what is allocated, and
+what is left, broken down by node pool, datacenter or node class. Capacity on
+nodes that are down, draining or ineligible is reported separately and never
+counted as available.
+
+Alongside every total it reports the largest amount actually placeable on a
+**single node**, because that is the number that decides placement. Cluster-wide
+free capacity is nearly meaningless in Nomad: ten nodes with 1GB free each
+cannot run one 2GB task, and a cluster reporting 10GB free will still refuse it.
+
+**`explain_placement`** works out node by node whether a job's task groups fit,
+and for every node that cannot take them, which specific thing rules it out —
+the datacenter, the node pool, the node's state, or how much CPU or memory is
+short, with both numbers.
+
+Nomad does not report this. A failed evaluation gives aggregate counters
+("12 nodes filtered") and never says which node lacked what.
+
+It evaluates datacenters, node pools, node state, resource fit and
+`distinct_hosts`. It does **not** evaluate other constraint blocks, affinities,
+spread or device requirements; those are listed unevaluated in the result, and
+`plan_job` remains the authoritative answer.
+
+**`analyze_job_resources`** compares what each task reserved with what it is
+observed using across every running allocation, and reports OOM kills read from
+task events — so they are found even for allocations that already died and even
+when current usage looks fine.
+
+Nomad stores no usage history, so each measurement is a single instantaneous
+sample taken during the call, not an average or a percentile. That is enough to
+catch gross over-provisioning and imminent OOM, and not enough to size a spiky
+workload; every result says so. Peak memory is reported only where the driver
+measures it, rather than showing zero where it does not.
+
 ## [1.2.0] — 2026-08-29
 
 Storage and integration troubleshooting: the two areas where the cause is

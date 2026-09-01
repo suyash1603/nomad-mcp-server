@@ -5,9 +5,9 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for
 assistant structured, safe access to a Nomad cluster: what is running, what is
 broken, why, and — when you let it — how to fix it.
 
-96 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
-volumes, CSI plugins and variables, plus five cross-cutting investigation tools
-and hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
+99 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
+volumes, CSI plugins and variables, plus cross-cutting tools for investigation
+and capacity planning, and hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
 against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
 API is reachable.
 
@@ -287,6 +287,7 @@ NOMAD_MCP_TOOLSETS=jobs,allocs,deployments nomad-mcp-server stdio
 | `jobs` | Job specifications, versions, planning and submission |
 | `allocs` | Allocations, task logs, allocation files, resource statistics, health checks |
 | `investigate` | Cluster-wide problem scan, job log search, job timeline, volume and integration diagnosis |
+| `capacity` | Cluster capacity, per-node placement feasibility, job right-sizing |
 | `nodes` | Client nodes, draining, eligibility |
 | `deployments` | Deployments and scheduler evaluations |
 | `catalog` | Namespaces, service registrations, storage volumes, CSI plugins |
@@ -335,7 +336,7 @@ plaintext, and failing at startup beats a warning nobody reads.
 
 ## Tools
 
-96 tools: **59 read-only** and **37 mutating**. Twelve of them are Enterprise-only
+99 tools: **62 read-only** and **37 mutating**. Twelve of them are Enterprise-only
 and are not registered at all against a cluster identified as Community Edition —
 see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
 
@@ -382,6 +383,35 @@ accepts `since` and `until`, but they can only be applied to lines the workload
 timestamped itself — and when it did not, the result says so in
 `time_filter_note` rather than quietly returning everything. Do not read a log
 search as proof that something never happened.
+
+### Capacity and sizing
+
+Arithmetic over the node, allocation and job views. Nomad exposes every number
+these need and joins none of them.
+
+| | Tool | What it does |
+|---|---|---|
+| R | `get_cluster_capacity` | What the cluster has, what is allocated, and the largest task group placeable on any **single** node |
+| R | `explain_placement` | Node by node, whether a job's groups fit — and for each node that cannot take them, exactly what rules it out |
+| R | `analyze_job_resources` | What each task reserved against what it is observed using, plus OOM-kill history |
+
+**The one thing to understand about Nomad capacity.** Cluster-wide free capacity
+is nearly meaningless, because a task group must fit entirely on **one node**.
+Ten nodes with 1GB free each cannot run one 2GB task, and a cluster reporting
+10GB free will still refuse to place it. Every total here is reported alongside
+the largest amount actually placeable on a single node, and that second number
+is the one that answers "will this fit?".
+
+**Reservations are not usage.** A task reserving 2GB and using 150MB holds 2GB
+against the cluster — `get_cluster_capacity` counts it as full and
+`analyze_job_resources` is what shows the gap. Note that Nomad stores no usage
+history: those measurements are single instantaneous samples, enough to catch
+gross over-provisioning and imminent OOM, not enough to size a spiky workload.
+
+`explain_placement` evaluates datacenters, node pools, node state and resource
+fit. It does **not** evaluate constraint blocks, affinities, spread or device
+requirements — those are listed unevaluated in the result, and `plan_job`
+remains the authoritative answer.
 
 ### Cluster, connection and search
 
