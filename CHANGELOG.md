@@ -8,6 +8,65 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Tool names, arguments and output shapes are covered by that guarantee: a
 breaking change to any of them means a new major version.
 
+## [1.4.0] — 2026-09-02
+
+ACL policies, tokens and roles — read, create and update — behind an opt-in
+switch. Nothing existing changed name, arguments or output shape, and a server
+upgraded to this version offers exactly the tools it offered before unless the
+new switch is set.
+
+### Added
+
+A new `acl` toolset of 11 tools, taking the catalog to 110 — 68 read-only, 42
+mutating. It is the first toolset that `NOMAD_MCP_TOOLSETS=all` does not select.
+
+**Reads.** `list_acl_policies` and `read_acl_policy` for what is granted;
+`list_acl_tokens` and `read_acl_token` for who holds it; `list_acl_roles` and
+`read_acl_role` for how it is bundled. `list_acl_tokens` flags expired and
+management tokens in words, because an expired token is a common and confusing
+cause of "Permission denied" and a management token in the list is a finding.
+
+**Writes.** `write_acl_policy`, `create_acl_token`, `update_acl_token`,
+`create_acl_role` and `update_acl_role`.
+
+`update_acl_token` and `update_acl_role` read before they write. Nomad's update
+endpoints replace the whole object, so sending only the changed fields would
+clear the rest — renaming a token would silently strip its policies. An omitted
+argument now means unchanged; a supplied list replaces its field in full, and
+the response says what it displaced. `write_acl_policy` carries a policy's
+workload attachment (`JobACL`) forward for the same reason.
+
+`update_acl_role` is the widest-reaching write here: a role's policy list
+applies to every token linked to it, so its response names that consequence
+explicitly.
+
+### Two new settings
+
+| Environment variable | Flag | Default | Effect |
+|---|---|---|---|
+| `NOMAD_MCP_ENABLE_ACL` | `--enable-acl` | `false` | Whether the ACL tools are registered at all |
+| `NOMAD_MCP_ALLOW_TOKEN_SECRETS` | `--allow-token-secrets` | `false` | Whether a response may contain a token's `SecretID` |
+
+`NOMAD_MCP_ENABLE_ACL` is the only thing that offers the toolset.
+`NOMAD_MCP_TOOLSETS=acl` on its own offers nothing and logs a warning at
+startup — `--toolsets` is how operators narrow the catalog, so letting it widen
+this one would be backwards.
+
+### Still deliberately absent
+
+- **No `bootstrap_acl_token`.** It mints a management token, which is the
+  specific capability this project has refused from the start.
+- **No delete tools** for policies, tokens or roles. Deletion is an
+  availability change with no undo that can lock out the operator, including
+  revoking the token this server authenticates with.
+- **No token secrets by default.** `read_acl_token` and `create_acl_token`
+  return the accessor ID and never the `SecretID`, even though Nomad returns it
+  to the server on both endpoints. The operator retrieves it with `nomad acl
+  token info <accessor_id>` at a terminal.
+
+See [docs/SECURITY.md](docs/SECURITY.md) for the reasoning and how the four
+gates compose.
+
 ## [1.3.0] — 2026-09-01
 
 Capacity and sizing: three tools that do the arithmetic Nomad leaves to you.

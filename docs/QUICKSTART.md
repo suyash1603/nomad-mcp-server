@@ -235,8 +235,9 @@ Give it a **read-only ACL policy scoped to one namespace**, not your management
 token.
 
 The defaults are on your side: writes are refused (`NOMAD_MCP_READ_ONLY=true`),
-Variable values are not returned (`NOMAD_MCP_ALLOW_VARIABLE_READS=false`), and
-you can pin it to specific namespaces with `NOMAD_MCP_ALLOWED_NAMESPACES`.
+Variable values are not returned (`NOMAD_MCP_ALLOW_VARIABLE_READS=false`), the
+ACL tools are not offered at all (`NOMAD_MCP_ENABLE_ACL=false`), and you can pin
+it to specific namespaces with `NOMAD_MCP_ALLOWED_NAMESPACES`.
 
 ```bash
 claude mcp add nomad-staging \

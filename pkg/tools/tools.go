@@ -18,6 +18,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
+	"github.com/suyash1603/nomad-mcp-server/pkg/config"
 	"github.com/suyash1603/nomad-mcp-server/pkg/utils"
 )
 
@@ -31,9 +32,10 @@ const editionProbeTimeout = 5 * time.Second
 // It is exported and separate from InitTools so that tests can inspect the
 // catalog directly — checking that each tool is annotated, that every mutating
 // tool is refused in read-only mode, and that descriptions exist — without
-// standing up an MCP server and driving it over a transport. It ignores both
-// filters, so tests see every tool regardless of how any given server is
-// configured or what edition any cluster happens to run.
+// standing up an MCP server and driving it over a transport. It ignores every
+// filter, so tests see every tool regardless of how any given server is
+// configured, what edition any cluster happens to run, and whether the opt-in
+// toolsets are switched on.
 func Catalog(p *client.Provider) []server.ServerTool {
 	var out []server.ServerTool
 	for _, ts := range Toolsets(p) {
@@ -44,17 +46,26 @@ func Catalog(p *client.Provider) []server.ServerTool {
 
 // CatalogFor returns the tools to register for one particular server.
 //
-// Two filters apply, and they are independent. The toolset filter is the
+// Three filters apply, and they are independent. The toolset filter is the
 // operator's choice about what this server should offer at all; an empty or nil
-// toolsets slice means every one of them. The edition filter drops the
-// Enterprise-only tools when the cluster is known to be Community Edition, so
-// the model is not offered tools that can only fail.
+// toolsets slice means every one of them. The opt-in filter drops a toolset
+// whose own switch is off, even when the operator named it — that is what makes
+// "all" safe to be the default while the ACL tools exist. The edition filter
+// drops the Enterprise-only tools when the cluster is known to be Community
+// Edition, so the model is not offered tools that can only fail.
 func CatalogFor(p *client.Provider, includeEnterprise bool, toolsets []string) []server.ServerTool {
 	selected := toolsetSelection(toolsets)
 
 	var out []server.ServerTool
 	for _, ts := range Toolsets(p) {
 		if selected != nil && !selected[ts.Name] {
+			continue
+		}
+		// An opt-in toolset is skipped whether it was selected explicitly or
+		// swept up by "all". Its switch is the only thing that offers it, so
+		// that a server upgraded in place never gains reach its operator did
+		// not ask for.
+		if ts.OptIn && !ts.Enabled {
 			continue
 		}
 		for _, t := range ts.Tools {
@@ -134,6 +145,8 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []ser
 			Info("tool catalog restricted to the configured toolsets")
 	}
 
+	warnUnenabledOptIns(p, toolsets)
+
 	for _, t := range tools {
 		// Classification is derived from the tool's own MCP read-only
 		// annotation rather than from a separate list, so the two cannot drift
@@ -150,4 +163,26 @@ func InitTools(s *server.MCPServer, p *client.Provider, gate *client.Gate) []ser
 		Debug("registered tools")
 
 	return tools
+}
+
+// warnUnenabledOptIns logs when the operator named an opt-in toolset whose own
+// switch is off.
+//
+// Silently registering nothing would look exactly like a broken tool from the
+// model's side and like a broken setting from the operator's. This is the one
+// case where a startup warning is worth the noise: the operator has said
+// unambiguously that they want the toolset, and the answer is a second setting
+// they did not know about.
+func warnUnenabledOptIns(p *client.Provider, toolsets []string) {
+	selected := toolsetSelection(toolsets)
+	if selected == nil {
+		return
+	}
+	for _, ts := range Toolsets(p) {
+		if ts.OptIn && !ts.Enabled && selected[ts.Name] {
+			p.Logger().WithField("toolset", ts.Name).
+				Warn("toolset was requested but its own enable switch is off, so none of its " +
+					"tools are registered; see " + config.EnvEnableACL)
+		}
+	}
 }

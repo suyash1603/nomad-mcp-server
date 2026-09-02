@@ -17,6 +17,9 @@ Read this before pointing it at a cluster you care about.
 3. **Writes are off by default**, and turning them on is a deliberate act.
 4. **Nomad Variables are gated separately**, because read-only mode protects the
    cluster from changes and does nothing for confidentiality.
+5. **The ACL tools are absent unless you ask for them**, no tool mints a
+   management token or deletes anything, and a token's secret is never returned
+   by default.
 
 ---
 
@@ -289,6 +292,9 @@ Use it alongside the token, not instead of it. The layering that actually holds:
 3. **Read-only and the destructive tier** — whether the mutating half of what is
    offered may run.
 4. **The namespace allowlist** — checked before the request is sent.
+5. **The two confidentiality switches** — `NOMAD_MCP_ALLOW_VARIABLE_READS` and
+   `NOMAD_MCP_ALLOW_TOKEN_SECRETS`, which govern disclosure rather than change
+   and are the only controls read-only mode does nothing for.
 
 An unknown toolset name is refused at startup rather than ignored. Ignoring it
 would mean an operator who typoed `variable` for `variables` gets a server that
@@ -297,16 +303,69 @@ in.
 
 ---
 
-## No ACL tools, deliberately
+## ACL tools, and what they still will not do
 
-There are no tools for creating, reading or writing ACL tokens or policies.
+This server shipped with no ACL tools at all. That was the right default and
+remains the default: the tools exist now, and they are **off unless you set
+`NOMAD_MCP_ENABLE_ACL=true`**. Upgrading the binary does not turn them on, and
+`NOMAD_MCP_TOOLSETS=acl` does not turn them on either — the switch is the only
+thing that offers them.
 
-Other Nomad MCP servers expose these; at least one can mint a **management
-token** directly into the model's context, at which point every other control is
-decorative. The safest way to handle a capability like that is not to build it.
+They exist because reading policies and tokens is how most "Permission denied"
+questions actually get answered, and answering that question by hand is tedious
+work a model does well. The original objection was never to reading. It was to
+minting.
 
-If you need ACL management, use the `nomad` CLI. That is a place where a human
-in the loop is the point rather than an inconvenience.
+So three things stay absent, permanently:
+
+**No bootstrap.** There is no `bootstrap_acl_token`. It mints a management
+token — a root credential — and a model holding one makes every other control
+on this page decorative. Other Nomad MCP servers expose it; that is the specific
+thing this one will not do.
+
+**No deletion.** There is no tool that deletes a policy, a token or a role.
+Deletion here is an availability change with no undo, and the failure mode is
+locking out the operator — plausibly including the token this server itself
+authenticates with, at which point the tool that caused the problem cannot be
+used to fix it. `nomad acl policy delete` and friends are the right place, at a
+terminal, with a human in the loop.
+
+**No token secrets.** `read_acl_token` and `create_acl_token` return the
+**accessor ID** and never the `SecretID`, even though Nomad returns the secret
+to this server on both endpoints. A secret in a model's context has been
+disclosed to wherever that context goes — a provider, a transcript, a log — and
+no later action retracts it.
+
+Nothing is lost by this. The accessor ID is a management handle and cannot
+authenticate to Nomad; the secret is still available to the operator through
+`nomad acl token info <accessor_id>` at a terminal. If you genuinely need the
+secret in the conversation, `NOMAD_MCP_ALLOW_TOKEN_SECRETS=true` returns it,
+and the response carries a handling warning when it does. Treat that switch the
+way you treat `NOMAD_MCP_ALLOW_VARIABLE_READS`: it protects confidentiality,
+which read-only mode does not.
+
+### The gates compose
+
+Turning the ACL tools on turns nothing else on. All four controls apply
+independently to the same call:
+
+| Control | Governs |
+|---|---|
+| `NOMAD_MCP_ENABLE_ACL` | whether the eleven ACL tools are registered at all |
+| `NOMAD_MCP_READ_ONLY` | whether the five write tools may run (default: no) |
+| `NOMAD_MCP_ALLOW_DESTRUCTIVE` | whether `write_acl_policy`, `create_acl_token`, `update_acl_token` and `update_acl_role` may run |
+| `NOMAD_MCP_ALLOW_TOKEN_SECRETS` | whether a response may contain a `SecretID` |
+
+`create_acl_token` is annotated destructive even though it discards nothing.
+The destructive tier is this server's "nothing irreversible" line, and minting a
+credential is irreversible in the way that matters: a secret that has existed
+cannot be un-issued, only revoked, and revocation does not reach whatever
+already copied it.
+
+Above all of these sits the ACL token the server runs with, which is still the
+only limit Nomad itself enforces. A token without `acl:write` cannot write a
+policy however these switches are set — and a server that does ACL reads for
+diagnosis has no reason to hold a token that can do more than `acl:read`.
 
 ---
 

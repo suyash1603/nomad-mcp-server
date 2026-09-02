@@ -63,6 +63,8 @@ const (
 	EnvAllowVariableReads = "NOMAD_MCP_ALLOW_VARIABLE_READS"
 	EnvMaxLogBytes        = "NOMAD_MCP_MAX_LOG_BYTES"
 	EnvAllowDestructive   = "NOMAD_MCP_ALLOW_DESTRUCTIVE"
+	EnvEnableACL          = "NOMAD_MCP_ENABLE_ACL"
+	EnvAllowTokenSecrets  = "NOMAD_MCP_ALLOW_TOKEN_SECRETS"
 	EnvEnableHCDiag       = "NOMAD_MCP_ENABLE_HCDIAG"
 	EnvHCDiagPath         = "NOMAD_MCP_HCDIAG_PATH"
 	EnvHCDiagDest         = "NOMAD_MCP_HCDIAG_DEST"
@@ -101,6 +103,24 @@ const (
 	// gate they did not know about would look like a broken tool. Operators who
 	// do want the middle tier set it to false.
 	DefaultAllowDestructive = true
+
+	// DefaultEnableACL is false, and unlike every other toolset the ACL tools
+	// are not merely deselectable — they are absent until this is set.
+	//
+	// This server shipped without ACL tools at all, on the argument that a
+	// model able to mint credentials makes every other control decorative. The
+	// tools exist now because reading policies and tokens is how most
+	// "Permission denied" questions actually get answered, but the default has
+	// to stay off: an operator upgrading the binary must not silently acquire
+	// the ability to issue tokens against their cluster.
+	DefaultEnableACL = false
+
+	// DefaultAllowTokenSecrets is false. A token's SecretID is the credential;
+	// once it is in a model's context it has been disclosed to wherever that
+	// context goes, and no later action retracts it. Withholding it costs
+	// nothing real, because `nomad acl token info <accessor_id>` still prints
+	// it at a terminal.
+	DefaultAllowTokenSecrets = false
 
 	// DefaultHCDiagPath is the name looked up on PATH. It is configuration
 	// rather than a tool argument on purpose: the model must not be able to
@@ -201,6 +221,10 @@ var settings = []setting{
 		"Maximum bytes returned by log and allocation file reads before truncation"},
 	{"allow-destructive", EnvAllowDestructive, kindBool, DefaultAllowDestructive, scopeRoot,
 		"Allow tools that discard state or interrupt running work. Set false for a writes-but-nothing-irreversible tier"},
+	{"enable-acl", EnvEnableACL, kindBool, DefaultEnableACL, scopeRoot,
+		"Offer the ACL tools (policies, tokens, roles). Off by default: these govern who may do anything at all"},
+	{"allow-token-secrets", EnvAllowTokenSecrets, kindBool, DefaultAllowTokenSecrets, scopeRoot,
+		"Allow the ACL tools to return a token's secret. Off by default; the accessor ID is returned instead"},
 	{"enable-hcdiag", EnvEnableHCDiag, kindBool, false, scopeRoot,
 		"Allow collect_hcdiag to execute the local hcdiag binary and write a support bundle to disk"},
 	{"hcdiag-path", EnvHCDiagPath, kindString, DefaultHCDiagPath, scopeRoot,
@@ -265,6 +289,13 @@ type Config struct {
 	AllowDestructive   bool
 	Enterprise         string
 	Toolsets           []string
+
+	// ACL. The ACL tools govern who may use the cluster at all, so they carry
+	// their own opt-in rather than riding on the read-only setting — and a
+	// second one for disclosing token secrets, because read-only mode protects
+	// the cluster from change and this protects credentials from disclosure.
+	EnableACL         bool
+	AllowTokenSecrets bool
 
 	// hcdiag. This is the only tool that runs a local binary, so it carries
 	// its own opt-in rather than riding on the read-only setting.
@@ -377,6 +408,8 @@ func Load() (*Config, error) {
 		AllowVariableReads: viper.GetBool("allow-variable-reads"),
 		MaxLogBytes:        int64(viper.GetInt("max-log-bytes")),
 		AllowDestructive:   viper.GetBool("allow-destructive"),
+		EnableACL:          viper.GetBool("enable-acl"),
+		AllowTokenSecrets:  viper.GetBool("allow-token-secrets"),
 		EnableHCDiag:       viper.GetBool("enable-hcdiag"),
 		HCDiagPath:         strings.TrimSpace(viper.GetString("hcdiag-path")),
 		HCDiagDest:         strings.TrimSpace(viper.GetString("hcdiag-dest")),
@@ -579,7 +612,7 @@ func (c *Config) EnterpriseAuto() bool { return c.Enterprise == "auto" || c.Ente
 // exists, which is what stops the two drifting apart.
 func ToolsetsFlagUsage() string {
 	return "Comma-separated toolsets to offer: " +
-		"system, jobs, allocs, investigate, capacity, nodes, deployments, catalog, variables, diag, enterprise. " +
+		"system, jobs, allocs, investigate, capacity, nodes, deployments, catalog, variables, diag, enterprise, acl. " +
 		"Narrowing this cuts the context the catalog costs on every request, and limits " +
 		"what the server can reach at all. Default " + DefaultToolsets
 

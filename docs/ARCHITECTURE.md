@@ -863,12 +863,66 @@ diffs the key sets, and returns any dropped keys in `keys_removed` with a
 warning. Silently losing a key from a secret store is the worst failure mode
 available to this server, and it should be impossible to do accidentally.
 
-## No ACL tools
+## `pkg/tools/acl` — the toolset that is not offered by default
 
-Both prior-art Nomad MCP servers expose ACL token creation; one of them can mint
-a management token straight into the model's context. The decision here was to
-not build them at all, so there is nothing to gate and nothing to get wrong. It
-is a deliberate exclusion, not an oversight.
+Every other toolset answers a question about what an operator wants in the
+model's context, and `all` is the right default for that. The ACL toolset
+answers a different question — what this server may do to the cluster's access
+control — and must not inherit the same default.
+
+So `toolsetDef` carries an `optIn` flag, and `CatalogFor` skips an opt-in
+toolset whose switch is off *whether or not the operator named it*. That last
+part is the part worth arguing about: `--toolsets` is the setting operators
+reach for to **narrow** the catalog, so letting `--toolsets=acl` widen it would
+invert what the setting means. `NOMAD_MCP_ENABLE_ACL` is the only thing that
+offers these tools; naming the toolset without it logs a warning at startup,
+because silently registering nothing looks like a broken tool from the model's
+side and a broken setting from the operator's.
+
+`Catalog` still returns them, deliberately. The catalog-wide tests — every tool
+annotated, every mutating tool refused in read-only mode, every description
+usable — have to cover the ACL tools, and they would not if the opt-in filter
+applied there too. `TestACLToolsetIsOptIn` asserts the offering behaviour
+separately, and an e2e test asserts it against the built binary, which is where
+an opt-in silently becomes an opt-out.
+
+### Secrets never leave the package by accident
+
+Nomad returns a token's `SecretID` on both `read_acl_token`'s endpoint and
+`create_acl_token`'s. Every path that renders a token goes through one function,
+`tokenProjection`, and the decision about the secret is made there — once,
+rather than at each of the three call sites where forgetting it would be a
+disclosure. By default the field is omitted entirely rather than emitted as a
+placeholder, because a placeholder reads like a token whose secret is genuinely
+empty.
+
+Withholding it costs nothing real: the accessor ID is a management handle that
+cannot authenticate, and `nomad acl token info <accessor_id>` still prints the
+secret at a terminal. `NOMAD_MCP_ALLOW_TOKEN_SECRETS` returns it anyway, and the
+response carries a handling warning when it does.
+
+### Read before write
+
+`update_acl_token` and `update_acl_role` both read the object before writing it.
+Nomad's update endpoints take the whole object and replace it, so sending only
+the changed fields would clear everything else — a caller who renamed a token
+would silently strip its policies. Merging in the handler is what makes
+"omitted means unchanged" true rather than merely intended, and it is what
+supplies the role ID that `ACLRoles().Update` requires from callers who have
+only a name.
+
+`write_acl_policy` does the same for a policy's `JobACL`, which it cannot set
+and must not drop: a rules-only update to a workload-attached policy would
+otherwise detach it from the job identity it was written for.
+
+### What is still absent
+
+There is no `bootstrap_acl_token` and no delete tool for policies, tokens or
+roles. Bootstrap mints a management token — a root credential — which is the
+specific capability this project refused from the start. Deletion is an
+availability change with no undo that can lock out the operator, plausibly
+including revoking the token this server itself authenticates with, at which
+point the tool that caused the problem cannot be used to fix it.
 
 ---
 

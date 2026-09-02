@@ -11,6 +11,8 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/suyash1603/nomad-mcp-server/pkg/client"
+	"github.com/suyash1603/nomad-mcp-server/pkg/config"
+	"github.com/suyash1603/nomad-mcp-server/pkg/tools/acl"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/allocs"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/capacity"
 	"github.com/suyash1603/nomad-mcp-server/pkg/tools/catalog"
@@ -37,6 +39,7 @@ const (
 	ToolsetCapacity    = "capacity"
 	ToolsetEnterprise  = "enterprise"
 	ToolsetDiag        = "diag"
+	ToolsetACL         = "acl"
 )
 
 // ToolsetAll selects every toolset. It is the default, so a server started with
@@ -57,6 +60,15 @@ type Toolset struct {
 	// separate axis: the read-only gate decides whether a mutating tool may
 	// run, and the toolset decides whether it is offered at all.
 	Tools []server.ServerTool
+
+	// OptIn marks a toolset that "all" does not select. The operator has to
+	// name it through its own setting before it is offered, so that upgrading
+	// the server never widens what it can reach.
+	OptIn bool
+
+	// Enabled reports whether an opt-in toolset's switch is on. It is always
+	// true for a toolset that is not opt-in.
+	Enabled bool
 }
 
 // toolsetDef is a toolset before its tools have been built.
@@ -68,6 +80,18 @@ type toolsetDef struct {
 	name    string
 	summary string
 	build   func(p *client.Provider) []server.ServerTool
+
+	// optIn marks a toolset that the default "all" does not select, and
+	// enabled reads the setting that turns it on. A toolset with optIn set
+	// must supply enabled; the two travel together.
+	//
+	// This exists for exactly one toolset, and grudgingly. Every other group
+	// here is a question of what an operator wants in the model's context, and
+	// "all" is the right default for that. The ACL tools are a question of what
+	// the server may do to the cluster's access control, which is not the same
+	// question and must not inherit the same default.
+	optIn   bool
+	enabled func(cfg *config.Config) bool
 }
 
 // toolsetDefs is the single source of truth for what the server exposes.
@@ -295,6 +319,31 @@ var toolsetDefs = []toolsetDef{
 			}
 		},
 	},
+	{
+		name:    ToolsetACL,
+		summary: "ACL policies, tokens and roles (opt-in: NOMAD_MCP_ENABLE_ACL)",
+		optIn:   true,
+		enabled: func(cfg *config.Config) bool { return cfg.EnableACL },
+		build: func(p *client.Provider) []server.ServerTool {
+			return []server.ServerTool{
+				// Read.
+				acl.ListACLPolicies(p),
+				acl.ReadACLPolicy(p),
+				acl.ListACLTokens(p),
+				acl.ReadACLToken(p),
+				acl.ListACLRoles(p),
+				acl.ReadACLRole(p),
+
+				// Write. There is deliberately no bootstrap tool and no delete
+				// tool; see the package comment in pkg/tools/acl.
+				acl.WriteACLPolicy(p),
+				acl.CreateACLToken(p),
+				acl.UpdateACLToken(p),
+				acl.CreateACLRole(p),
+				acl.UpdateACLRole(p),
+			}
+		},
+	},
 }
 
 // Toolsets returns every toolset with its tools built, in offering order.
@@ -305,6 +354,8 @@ func Toolsets(p *client.Provider) []Toolset {
 			Name:    d.name,
 			Summary: d.summary,
 			Tools:   d.build(p),
+			OptIn:   d.optIn,
+			Enabled: d.isEnabled(p.Config()),
 		})
 	}
 	return out
@@ -393,6 +444,28 @@ func quoteAll(in []string) []string {
 	out := make([]string, len(in))
 	for i, s := range in {
 		out[i] = fmt.Sprintf("%q", s)
+	}
+	return out
+}
+
+// isEnabled reports whether an opt-in toolset's switch is on. A toolset that is
+// not opt-in is always enabled, so callers do not have to test both fields.
+func (d toolsetDef) isEnabled(cfg *config.Config) bool {
+	if !d.optIn {
+		return true
+	}
+	return d.enabled != nil && cfg != nil && d.enabled(cfg)
+}
+
+// OptInToolsets returns the names of the toolsets that "all" does not select,
+// in offering order. cmd uses it to warn an operator who asked for one without
+// turning it on.
+func OptInToolsets() []string {
+	var out []string
+	for _, d := range toolsetDefs {
+		if d.optIn {
+			out = append(out, d.name)
+		}
 	}
 	return out
 }
