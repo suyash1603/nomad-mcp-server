@@ -29,11 +29,17 @@ func testProvider(t *testing.T, readOnly bool) *client.Provider {
 	logger := log.New()
 	logger.SetOutput(io.Discard)
 
+	// EnableACL is on here and only here. The catalog-wide checks — every tool
+	// annotated, every mutating tool refused in read-only mode, every
+	// description usable — have to see the ACL tools, and Catalog ignores the
+	// opt-in filter precisely so they can. That the toolset is *not* offered by
+	// default is a separate property, asserted in TestACLToolsetIsOptIn.
 	p, err := client.New(&config.Config{
 		NomadAddr:      "http://127.0.0.1:1",
 		NomadNamespace: config.DefaultNomadNamespace,
 		ReadOnly:       readOnly,
 		MaxLogBytes:    config.DefaultMaxLogBytes,
+		EnableACL:      true,
 	}, logger)
 	require.NoError(t, err)
 	return p
@@ -88,6 +94,8 @@ func resultText(t *testing.T, res *mcp.CallToolResult) string {
 // catches that.
 var expectedMutatingTools = []string{
 	"apply_recommendations",
+	"create_acl_role",
+	"create_acl_token",
 	"create_namespace",
 	"create_node_pool",
 	"create_quota",
@@ -122,6 +130,9 @@ var expectedMutatingTools = []string{
 	"stop_job",
 	"transfer_leadership",
 	"unblock_deployment",
+	"update_acl_role",
+	"update_acl_token",
+	"write_acl_policy",
 	"write_sentinel_policy",
 	"write_variable",
 }
@@ -144,6 +155,15 @@ var expectedHints = []struct {
 	idempotent  bool
 }{
 	{"apply_recommendations", true, false},
+	// A role bundles policies nothing references yet, so creating one grants
+	// nobody anything: not destructive. Not idempotent because Nomad rejects a
+	// second create at the same name rather than converging on it.
+	{"create_acl_role", false, false},
+	// Destructive despite discarding nothing. A minted secret cannot be
+	// un-issued, only revoked, and revocation does not reach whatever copied
+	// it — which is the line the destructive tier is drawn at. Not idempotent:
+	// every call mints a distinct token, so a blind retry leaves two.
+	{"create_acl_token", true, false},
 	{"create_namespace", false, true},
 	{"create_node_pool", false, true},
 	{"create_quota", false, true},
@@ -178,6 +198,11 @@ var expectedHints = []struct {
 	{"stop_job", true, false},
 	{"transfer_leadership", true, true},
 	{"unblock_deployment", true, true},
+	// All three replace a live grant outright, and Nomad keeps no previous
+	// version of any of them.
+	{"update_acl_role", true, true},
+	{"update_acl_token", true, true},
+	{"write_acl_policy", true, true},
 	{"write_sentinel_policy", true, true},
 	{"write_variable", true, true},
 }
@@ -391,6 +416,6 @@ func TestCatalogSize(t *testing.T) {
 	p := testProvider(t, true)
 	all := Catalog(p)
 
-	require.GreaterOrEqual(t, len(all), 88, "tools appear to have gone missing from the catalog")
-	require.Equal(t, len(expectedMutatingTools), 37)
+	require.GreaterOrEqual(t, len(all), 99, "tools appear to have gone missing from the catalog")
+	require.Equal(t, len(expectedMutatingTools), 42)
 }

@@ -17,7 +17,7 @@ At startup it probes the cluster once:
 The result is cached for fifteen minutes and reported by `get_cluster_status`
 and `check_connection`.
 
-Twelve of the server's 88 tools call endpoints that exist only in Enterprise. On
+Twelve of the server's 99 default tools call endpoints that exist only in Enterprise. On
 a cluster identified as Community Edition they are **not registered at all**, so
 the model never sees a tool it cannot use. On Enterprise, or when the probe is
 inconclusive, they are offered.

@@ -7,7 +7,8 @@ broken, why, and — when you let it — how to fix it.
 
 99 tools across jobs, allocations, nodes, node pools, deployments, namespaces,
 volumes, CSI plugins and variables, plus cross-cutting tools for investigation
-and capacity planning, and hcdiag support-bundle collection. Works against Nomad Community Edition and Enterprise, and
+and capacity planning, hcdiag support-bundle collection, and an opt-in ACL
+toolset that takes it to 110. Works against Nomad Community Edition and Enterprise, and
 against a cluster running locally, on EC2, in Docker or anywhere else its HTTP
 API is reachable.
 
@@ -243,6 +244,8 @@ uses, so an environment that already works with `nomad status` works here.
 | `NOMAD_MCP_ALLOWED_NAMESPACES` | `--allowed-namespaces` | *(all)* | Comma-separated namespace allowlist |
 | `NOMAD_MCP_ALLOW_VARIABLE_READS` | `--allow-variable-reads` | `false` | Let `read_variable` return values |
 | `NOMAD_MCP_ALLOW_DESTRUCTIVE` | `--allow-destructive` | `true` | Allow tools that discard state or interrupt running work |
+| `NOMAD_MCP_ENABLE_ACL` | `--enable-acl` | **`false`** | Offer the ACL tools at all — see [ACL tools](#acl-tools) |
+| `NOMAD_MCP_ALLOW_TOKEN_SECRETS` | `--allow-token-secrets` | **`false`** | Let the ACL tools return a token's secret |
 | `NOMAD_MCP_MAX_LOG_BYTES` | `--max-log-bytes` | `65536` | Cap on log and file reads |
 | `NOMAD_MCP_ENTERPRISE` | `--enterprise` | `auto` | Offer the Enterprise-only tools: `auto`, `true` or `false` |
 | `NOMAD_MCP_TOOLSETS` | `--toolsets` | `all` | Which groups of tools to offer at all — see [Toolsets](#toolsets) |
@@ -294,10 +297,15 @@ NOMAD_MCP_TOOLSETS=jobs,allocs,deployments nomad-mcp-server stdio
 | `variables` | Nomad Variables |
 | `diag` | `collect_hcdiag` |
 | `enterprise` | Licence, quotas, Sentinel, Dynamic Application Sizing |
+| `acl` | ACL policies, tokens and roles — **opt-in**, see [ACL tools](#acl-tools) |
+
+`acl` is the one toolset `all` does not select. It needs `NOMAD_MCP_ENABLE_ACL`
+as well, and `NOMAD_MCP_TOOLSETS=acl` on its own offers nothing — `--toolsets`
+is how you narrow the catalog, so letting it widen this one would be backwards.
 
 Two reasons to narrow it. Every tool definition is sent to the model on **every
 request**, so a catalog this size is a standing context cost — a client that
-only ever asks about jobs and allocations pays for eighty-eight tools to answer
+only ever asks about jobs and allocations pays for ninety-nine tools to answer
 questions about twenty-seven. And a toolset that is never registered is a
 scoping control in its own right: a server without the `variables` toolset
 cannot read a Nomad Variable whatever its token permits.
@@ -339,6 +347,9 @@ plaintext, and failing at startup beats a warning nobody reads.
 99 tools: **62 read-only** and **37 mutating**. Twelve of them are Enterprise-only
 and are not registered at all against a cluster identified as Community Edition —
 see [docs/ENTERPRISE.md](docs/ENTERPRISE.md).
+
+A further 11 make up the [ACL toolset](#acl-tools), which is not counted above
+because it is not offered unless `NOMAD_MCP_ENABLE_ACL` is set.
 
 Mutating tools are listed even in read-only mode — `tools/list` describes the
 server honestly, and a blocked call returns an explanation rather than an
@@ -601,12 +612,47 @@ Not registered against a cluster identified as Community Edition. See
 | W! E | `delete_sentinel_policy` | Delete a policy — whatever it enforced stops being enforced |
 | W! E | `apply_recommendations` | Apply sizing proposals, which resubmits the jobs |
 
-### Not included: ACL tools
+### ACL tools
 
-There are deliberately no tools for creating, reading or writing ACL tokens or
-policies. Other Nomad MCP servers expose these; one of them can mint a
-management token directly into the model's context. The safest handling of that
-capability is not to build it.
+**Off by default.** These are the only tools that operate on who may use the
+cluster rather than on what runs in it, and they stay absent until you set
+`NOMAD_MCP_ENABLE_ACL=true`. Upgrading the server never turns them on.
+
+```bash
+NOMAD_MCP_ENABLE_ACL=true nomad-mcp-server stdio
+```
+
+| | Tool | What it is for |
+|---|---|---|
+| R | `list_acl_policies` | Policy names and descriptions — the starting point for any "why Permission denied" |
+| R | `read_acl_policy` | One policy, including the rules HCL that defines what it actually grants |
+| R | `list_acl_tokens` | Who holds access, which policies and roles each token carries, and which are **expired** or **management** |
+| R | `read_acl_token` | One token by accessor ID: its type, policies, roles and expiry |
+| R | `list_acl_roles` | Roles, with the policies each one bundles |
+| R | `read_acl_role` | One role, by name or ID |
+| W! | `write_acl_policy` | Create or replace a policy. Replaces the rules **in full**, and every token referencing it changes at once |
+| W! | `create_acl_token` | Mint a token. Confirm first — a secret that exists cannot be un-issued, only revoked |
+| W! | `update_acl_token` | Change a live token's policies or roles. The secret is unchanged, so holders keep working with different permissions |
+| W | `create_acl_role` | Create a role bundling existing policies. Grants nobody anything until a token links to it |
+| W! | `update_acl_role` | Change a role's policies — reaches **every token linked to it** at once |
+
+Three things are deliberately absent, and will stay absent:
+
+- **No `bootstrap_acl_token`.** It mints a management token — a root credential
+  — and that is the specific capability this project has always refused.
+- **No delete tools.** Deleting a policy, token or role is an availability
+  change that can lock out the operator, including revoking the token this
+  server itself authenticates with. `nomad acl ... delete` is the right place.
+- **No token secrets, by default.** `read_acl_token` and `create_acl_token`
+  return the **accessor ID**, never the secret, even though Nomad hands the
+  secret to the server. Nothing is lost: the accessor ID is enough to manage the
+  token, and the operator gets the secret with `nomad acl token info <accessor>`
+  at a terminal. Set `NOMAD_MCP_ALLOW_TOKEN_SECRETS=true` to return it anyway.
+
+The gates compose rather than override. `NOMAD_MCP_ENABLE_ACL` decides whether
+the tools exist; `NOMAD_MCP_READ_ONLY` still decides whether the five write
+tools may run; `NOMAD_MCP_ALLOW_DESTRUCTIVE` still governs the four marked `W!`.
+Turning ACLs on turns nothing else on.
 
 ---
 
@@ -687,8 +733,10 @@ the reason it exists rather than a claim that the alternatives are wrong:
   exist; a refused connection names the address it tried.
 - **Output shaped for a model.** Trimmed projections rather than raw API
   structs, and real pagination with `next_token` on every list tool.
-- **No ACL tooling, deliberately.** No tool mints, reads or deletes Nomad ACL
-  tokens or policies, in any form. See [docs/SECURITY.md](docs/SECURITY.md).
+- **ACL tooling that is off until you ask for it.** The ACL tools are absent
+  unless `NOMAD_MCP_ENABLE_ACL` is set, no tool mints a management token or
+  deletes anything, and a token's secret is never returned by default. See
+  [docs/SECURITY.md](docs/SECURITY.md).
 - **Deliberate parity with `vault-mcp-server`** — same layout, flags, env var
   names and subcommands, so knowing one means knowing the other.
 
