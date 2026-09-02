@@ -539,7 +539,11 @@ func TestEnterpriseToolsExplainThemselvesOnCommunityEdition(t *testing.T) {
 			msg := h.fails(tool.name, tool.args)
 			require.Contains(t, msg, "Nomad Enterprise")
 			require.Contains(t, msg, "Community Edition")
-			require.NotContains(t, msg, "501",
+			// "HTTP 501" rather than "501": the message embeds the address of
+			// the fake Nomad, whose port is chosen by the OS, and a port such
+			// as 50148 contains those three digits. The fallback this guards
+			// against always spells the code out in full.
+			require.NotContains(t, msg, "HTTP 501",
 				"the model should be told what happened, not given a status code")
 		})
 	}
